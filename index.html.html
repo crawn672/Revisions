@@ -181,6 +181,31 @@ tbody tr:hover{background:#FBFCFB;}
 .legend span{display:inline-flex; align-items:center; gap:5px;}
 .legend i{width:9px; height:9px; border-radius:50%; display:inline-block;}
 
+
+/* ---------- navigation / home / subjects ---------- */
+.main-nav{
+  display:flex; align-items:center; gap:10px; margin:4px 2px 16px;
+  padding:10px 12px; background:var(--card); border:1px solid var(--line);
+  border-radius:8px; box-shadow:var(--shadow);
+}
+.menu-label{font-family:'Fraunces',serif; font-weight:600; font-size:14px;}
+.main-menu{min-width:210px; flex:1; max-width:360px; padding:8px 10px; font-size:13px; cursor:pointer;}
+.home-card{text-align:center; padding:44px 20px 38px;}
+.home-icon{font-size:42px; margin-bottom:8px;}
+.home-card h2{font-size:25px; margin:0 0 8px;}
+.home-card p{color:var(--ink-soft); max-width:520px; margin:0 auto 20px;}
+.home-actions{display:flex; justify-content:center; gap:8px; flex-wrap:wrap;}
+.local-note{font-size:11px!important; color:var(--ink-faint)!important; margin-top:28px!important; margin-bottom:0!important;}
+.subject-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;}
+.subject-card{
+  text-align:left; border:1px solid var(--line); background:var(--paper); border-radius:9px;
+  padding:14px; cursor:pointer; color:var(--ink); min-height:82px;
+  transition:border-color .12s ease, transform .12s ease, box-shadow .12s ease;
+}
+.subject-card:hover{border-color:var(--teal); transform:translateY(-1px); box-shadow:var(--shadow);}
+.subject-card-name{display:block; font-family:'Fraunces',serif; font-size:15px; font-weight:600; margin-bottom:7px;}
+.subject-card-meta{display:block; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-faint); line-height:1.5;}
+
 @media (max-width:520px){
   .col-date input{width:102px;}
   .main-card{padding:14px 10px 18px;}
@@ -198,7 +223,7 @@ tbody tr:hover{background:#FBFCFB;}
     subjects: [],
     data: {},         // subjectId -> {courses:[...]}
     jlists: [],        // [{id,name,days:[...]}]
-    currentView: 'agenda', // 'agenda' | 'lists' | subjectId
+    currentView: 'home', // 'home' | 'lists' | 'agenda' | 'subjects' | subjectId
     addingSubject: false,
     addingList: false,
     editingSubjectId: null,
@@ -223,12 +248,28 @@ tbody tr:hover{background:#FBFCFB;}
   function fmtFR(iso){ var d=parseISO(iso); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); }
   function isWeekend(iso){ var day=parseISO(iso).getDay(); return day===0||day===6; }
 
-  var TODAY_ISO = toISODate(new Date());
+  // ---------------- date / local storage ----------------
+  // La date du jour est recalculée à chaque rendu : elle reste donc correcte
+  // même si la page reste ouverte plusieurs jours.
+  function todayISO(){ return toISODate(new Date()); }
 
-  // ---------------- storage ----------------
-  async function safeGet(key){ try{ var r=await window.storage.get(key,false); return r?r.value:null; }catch(e){ return null; } }
-  async function safeSet(key,value){ try{ await window.storage.set(key,value,false); }catch(e){} }
-  async function safeDelete(key){ try{ await window.storage.delete(key,false); }catch(e){} }
+  // Données 100% locales au navigateur : rien n'est envoyé à un serveur.
+  // Chaque navigateur / profil possède donc son propre agenda et ses propres cours.
+  var STORAGE_PREFIX = 'classeur-revisions-v2:';
+  function storageKey(key){ return STORAGE_PREFIX + key; }
+
+  async function safeGet(key){
+    try{ return window.localStorage.getItem(storageKey(key)); }
+    catch(e){ return null; }
+  }
+  async function safeSet(key,value){
+    try{ window.localStorage.setItem(storageKey(key), value); }
+    catch(e){}
+  }
+  async function safeDelete(key){
+    try{ window.localStorage.removeItem(storageKey(key)); }
+    catch(e){}
+  }
 
   async function loadSubjects(){ var raw=await safeGet('subjects'); state.subjects = raw?JSON.parse(raw):[]; }
   async function persistSubjects(){ await safeSet('subjects', JSON.stringify(state.subjects)); }
@@ -343,7 +384,7 @@ tbody tr:hover{background:#FBFCFB;}
   async function addCourse(subjectId){
     var d=await loadSubjectData(subjectId);
     var defaultList = state.jlists.length? state.jlists[0].id : null;
-    d.courses.push({id:uid('c'), name:'', dateLearned:TODAY_ISO, difficulty:null, listId:defaultList, done:{}});
+    d.courses.push({id:uid('c'), name:'', dateLearned:todayISO(), difficulty:null, listId:defaultList, done:{}});
     await persistSubjectData(subjectId); render();
   }
   async function updateCourse(subjectId, courseId, patch){
@@ -415,29 +456,61 @@ tbody tr:hover{background:#FBFCFB;}
   function diffColor(diff){ return diff==='green'?'var(--green)':diff==='orange'?'var(--orange)':diff==='red'?'var(--red)':'var(--ink-faint)'; }
 
   function renderTabs(){
-    var html='<div class="tabs-scroller">';
-    html+='<div class="folder-tab pinned'+(state.currentView==='agenda'?' active':'')+'" data-action="select-view" data-view="agenda"><div class="tab-name">📅 Agenda</div></div>';
-    html+='<div class="folder-tab pinned'+(state.currentView==='lists'?' active':'')+'" data-action="select-view" data-view="lists"><div class="tab-name">🗂 Listes de J</div></div>';
-    state.subjects.forEach(function(s){
-      var d=state.data[s.id]||{courses:[]};
-      var counts=diffCounts(d.courses||[]);
-      var active=state.currentView===s.id?' active':'';
-      html+='<div class="folder-tab'+active+'" data-action="select-view" data-view="'+s.id+'">'+
-        '<div class="tab-name">'+escapeHTML(s.name)+'</div>'+
-        '<div class="tab-dots">'+
-          (counts.g?'<span class="tab-dot g"></span>':'')+
-          (counts.o?'<span class="tab-dot o"></span>':'')+
-          (counts.r?'<span class="tab-dot r"></span>':'')+
-          '<span class="tab-dot count">'+(d.courses?d.courses.length:0)+'</span>'+
-        '</div></div>';
+    var html='<div class="main-nav">';
+    html+='<label class="menu-label" for="main-menu">☰ Menu</label>';
+    html+='<select id="main-menu" class="main-menu" data-action="navigate-menu">';
+    [
+      ['home','Accueil'],
+      ['lists','🗂 Listes de J'],
+      ['agenda','📅 Agenda'],
+      ['subjects','📚 Matières']
+    ].forEach(function(item){
+      html+='<option value="'+item[0]+'"'+(state.currentView===item[0]?' selected':'')+'>'+item[1]+'</option>';
     });
-    html+='<button class="add-folder-tab" data-action="show-add-subject">+ Dossier</button>';
-    html+='</div>';
+    html+='</select></div>';
+
     if(state.addingSubject){
       html+='<div class="new-row"><input type="text" id="new-subject-input" placeholder="Nom de la matière (ex. Cardiologie)" autofocus>'+
         '<button class="btn btn-primary btn-mini" data-action="confirm-add-subject">Créer</button>'+
         '<button class="btn btn-mini" data-action="cancel-add-subject">Annuler</button></div>';
     }
+    return html;
+  }
+
+  function renderHome(){
+    var html='<div class="main-card home-card">';
+    html+='<div class="home-icon">📚</div>';
+    html+='<h2 class="serif">Classeur de révisions</h2>';
+    html+='<p>Organise tes cours et tes révisions avec la répétition espacée.</p>';
+    html+='<div class="home-actions">';
+    html+='<button class="btn btn-primary" data-action="select-view" data-view="agenda">📅 Ouvrir l’agenda</button>';
+    html+='<button class="btn" data-action="select-view" data-view="subjects">📚 Voir les matières</button>';
+    html+='</div>';
+    html+='<p class="local-note">💾 Tes données sont enregistrées automatiquement dans le stockage local de ce navigateur. Elles restent privées à cet appareil / profil de navigateur.</p>';
+    html+='</div>';
+    return html;
+  }
+
+  function renderSubjects(){
+    var html='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">Matières</h2><button class="btn btn-primary btn-mini" data-action="show-add-subject">+ Ajouter une matière</button></div>';
+    html+='<div class="view-note">Choisis une matière pour afficher tous ses cours et leurs dates de révision.</div>';
+    if(!state.subjects.length){
+      html+='<div class="empty-state"><h2>Aucune matière</h2><p>Commence par créer ta première matière.</p><button class="btn btn-primary" data-action="show-add-subject">+ Ajouter une matière</button></div>';
+    } else {
+      html+='<div class="subject-grid">';
+      state.subjects.forEach(function(s){
+        var d=state.data[s.id]||{courses:[]};
+        var counts=diffCounts(d.courses||[]);
+        html+='<button class="subject-card" data-action="select-view" data-view="'+s.id+'">';
+        html+='<span class="subject-card-name">'+escapeHTML(s.name)+'</span>';
+        html+='<span class="subject-card-meta">'+(d.courses?d.courses.length:0)+' cours';
+        if(counts.g||counts.o||counts.r) html+=' · '+(counts.g?'faciles '+counts.g:'')+(counts.o?' · moyens '+counts.o:'')+(counts.r?' · difficiles '+counts.r:'');
+        html+='</span></button>';
+      });
+      html+='</div>';
+    }
+    html+='</div>';
     return html;
   }
 
@@ -455,7 +528,7 @@ tbody tr:hover{background:#FBFCFB;}
 
     var html='<div class="main-card">';
     html+='<div class="view-header"><h2 class="serif">Agenda global</h2></div>';
-    html+='<div class="view-note">Toutes matières confondues. Les dates sont légèrement ajustées (± quelques jours selon le J) pour répartir la charge sur la semaine — le week-end absorbe un peu plus. Un * indique une date décalée par rapport au J théorique.</div>';
+    html+='<div class="view-note">Toutes matières confondues. Les dates peuvent être légèrement ajustées (± quelques jours selon le J) pour répartir la charge. Un * indique une date décalée par rapport au J théorique.</div>';
     html+='<div class="legend"><span><i style="background:var(--green)"></i>Facile</span><span><i style="background:var(--orange)"></i>Moyen</span><span><i style="background:var(--red)"></i>Difficile</span></div>';
 
     html+='<div class="calendar-header"><div class="month-label">'+MONTHS[m]+' '+y+'</div>'+
@@ -470,7 +543,7 @@ tbody tr:hover{background:#FBFCFB;}
       var iso=toISODate(new Date(y,m,day));
       var evs=events[iso]||[];
       var cls='cal-day'+(isWeekend(iso)?' weekend':'');
-      if(iso===TODAY_ISO) cls+=' today';
+      if(iso===todayISO()) cls+=' today';
       if(iso===state.selectedDay) cls+=' selected';
       if(evs.length) cls+=' has-events';
       html+='<div class="'+cls+'" data-action="select-day" data-day="'+iso+'">'+day;
@@ -485,9 +558,9 @@ tbody tr:hover{background:#FBFCFB;}
     for(var j=0;j<trailing;j++){ html+='<div class="cal-day outside">'+(j+1)+'</div>'; }
     html+='</div>';
 
-    var selDay=state.selectedDay||TODAY_ISO;
+    var selDay=state.selectedDay||todayISO();
     var selEvs=(events[selDay]||[]).slice().sort(function(a,b){ return a.interval-b.interval; });
-    html+='<div class="calendar-header" style="margin-top:2px;"><div class="month-label" style="font-size:14px;">'+fmtFR(selDay)+(selDay===TODAY_ISO?' · aujourd\'hui':'')+'</div></div>';
+    html+='<div class="calendar-header" style="margin-top:2px;"><div class="month-label" style="font-size:14px;">'+fmtFR(selDay)+' '+MONTHS[parseISO(selDay).getMonth()]+' '+parseISO(selDay).getFullYear()+'</div></div>';
     html+='<div class="agenda-list">';
     if(!selEvs.length){ html+='<div class="agenda-empty">Aucune révision prévue ce jour-là.</div>'; }
     else{
@@ -599,7 +672,7 @@ tbody tr:hover{background:#FBFCFB;}
         html+='<span class="rev-empty">—</span>';
       } else {
         courseEvs.forEach(function(e){
-          var cls='rev-chip'+(e.done?' done':'')+((!e.done && e.scheduled<TODAY_ISO)?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
+          var cls='rev-chip'+(e.done?' done':'')+((!e.done && e.scheduled<todayISO())?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
           html+='<span class="'+cls+'" data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'">'+
             '<span class="rj">J'+e.interval+'</span><span class="rd">'+fmtFR(e.scheduled)+'</span></span>';
         });
@@ -617,15 +690,17 @@ tbody tr:hover{background:#FBFCFB;}
   }
 
   function renderMain(){
+    if(state.currentView==='home') return renderHome();
     if(state.currentView==='agenda') return renderAgenda();
     if(state.currentView==='lists') return renderLists();
+    if(state.currentView==='subjects') return renderSubjects();
     if(state.currentView && state.data[state.currentView]!==undefined) return renderSubject(state.currentView);
-    return renderAgenda();
+    return renderHome();
   }
 
   function render(){
     var html='<div class="app-title"><h1>Classeur de révisions</h1><span class="mono">répétition espacée</span></div>';
-    html+='<div class="app-sub">Un agenda commun à toutes les matières, avec répartition intelligente de la charge.</div>';
+    html+='<div class="app-sub">Révisions espacées · sauvegarde automatique locale</div>';
     html+=renderTabs();
     html+=renderMain();
     app.innerHTML=html;
@@ -660,8 +735,14 @@ tbody tr:hover{background:#FBFCFB;}
     if(!el) return;
     var action=el.dataset.action;
 
-    if(action==='select-view'){ state.currentView=el.dataset.view; state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
-      if(el.dataset.view!=='agenda' && el.dataset.view!=='lists'){ loadSubjectData(el.dataset.view).then(render); } else { render(); } }
+    if(action==='select-view'){
+      state.currentView=el.dataset.view;
+      state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
+      if(el.dataset.view && state.data[el.dataset.view]===undefined && el.dataset.view!=='agenda' && el.dataset.view!=='lists' && el.dataset.view!=='home' && el.dataset.view!=='subjects'){
+        loadSubjectData(el.dataset.view).then(render);
+      } else { render(); }
+    }
+    else if(action==='navigate-menu'){ /* handled by change event */ }
     else if(action==='show-add-subject'){ state.addingSubject=true; render(); }
     else if(action==='cancel-add-subject'){ state.addingSubject=false; render(); }
     else if(action==='confirm-add-subject'){ createSubject(document.getElementById('new-subject-input').value); }
@@ -691,7 +772,7 @@ tbody tr:hover{background:#FBFCFB;}
 
     else if(action==='cal-prev'){ state.calendarMonth=new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth()-1, 1); render(); }
     else if(action==='cal-next'){ state.calendarMonth=new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth()+1, 1); render(); }
-    else if(action==='cal-today'){ state.calendarMonth=startOfMonth(new Date()); state.selectedDay=TODAY_ISO; render(); }
+    else if(action==='cal-today'){ state.calendarMonth=startOfMonth(new Date()); state.selectedDay=todayISO(); render(); }
     else if(action==='select-day'){ state.selectedDay=el.dataset.day; render(); }
   });
 
@@ -699,9 +780,24 @@ tbody tr:hover{background:#FBFCFB;}
     var el=e.target.closest('[data-action]');
     if(!el) return;
     var action=el.dataset.action;
-    if(action==='course-name'){ updateCourse(el.dataset.subject, el.dataset.id, {name:el.value}); }
+    if(action==='navigate-menu'){
+      state.currentView=el.value;
+      state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
+      if(state.currentView!=='agenda' && state.currentView!=='lists' && state.currentView!=='home' && state.currentView!=='subjects' && state.data[state.currentView]===undefined){
+        loadSubjectData(state.currentView).then(render);
+      } else render();
+    }
+    else if(action==='course-name'){ updateCourse(el.dataset.subject, el.dataset.id, {name:el.value}); }
     else if(action==='course-date'){ updateCourse(el.dataset.subject, el.dataset.id, {dateLearned:el.value}).then(render); }
     else if(action==='course-list'){ updateCourse(el.dataset.subject, el.dataset.id, {listId:el.value}).then(render); }
+  });
+
+  app.addEventListener('input', function(e){
+    var el=e.target.closest('[data-action]');
+    if(!el) return;
+    if(el.dataset.action==='course-name'){
+      updateCourse(el.dataset.subject, el.dataset.id, {name:el.value});
+    }
   });
 
   // ---------------- init ----------------
@@ -710,7 +806,7 @@ tbody tr:hover{background:#FBFCFB;}
     await loadJLists();
     await loadSubjects();
     for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
-    state.selectedDay=TODAY_ISO;
+    state.selectedDay=todayISO();
     render();
   }
   init();
