@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Classeur de révisions</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --paper:#EEF1EC;
+  --card:#FFFFFF;
+  --ink:#1C2B3A;
+  --ink-soft:#5B6B76;
+  --ink-faint:#8E9AA3;
+  --line:#D9E0DA;
+  --teal:#2F6F63;
+  --teal-dark:#1F4F46;
+  --teal-bg:#E1EEEA;
+  --amber:#B98B2E;
+  --amber-bg:#F6EEDC;
+  --green:#4C9A6A;
+  --green-bg:#E4F3E9;
+  --orange:#DA8A3B;
+  --orange-bg:#FBEFDE;
+  --red:#C94C5C;
+  --red-bg:#FBE5E8;
+  --radius:10px;
+  --shadow:0 1px 2px rgba(28,43,58,.06), 0 4px 14px rgba(28,43,58,.05);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:'IBM Plex Sans', sans-serif; font-size:14px; line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,.serif{font-family:'Fraunces', serif;}
+.mono{font-family:'IBM Plex Mono', monospace;}
+#app{max-width:1100px; margin:0 auto; padding:16px 12px 60px;}
+
+.app-title{display:flex; align-items:baseline; gap:10px; margin:4px 4px 4px;}
+.app-title h1{font-size:20px; font-weight:600; margin:0; letter-spacing:-.01em;}
+.app-title span{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); letter-spacing:.02em;}
+.app-sub{margin:0 4px 14px; font-size:12px; color:var(--ink-faint);}
+
+/* ---------- tabs ---------- */
+.tabs-scroller{display:flex; gap:8px; overflow-x:auto; padding:4px 2px 12px; -webkit-overflow-scrolling:touch;}
+.tabs-scroller::-webkit-scrollbar{display:none;}
+
+.folder-tab{
+  position:relative; flex:0 0 auto; min-width:110px; max-width:220px;
+  background:var(--card); border:1px solid var(--line); border-bottom:none;
+  border-radius:8px 8px 0 0; padding:9px 12px 8px; cursor:pointer;
+  transition:transform .12s ease, box-shadow .12s ease;
+  clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 100%, 0 100%);
+}
+.folder-tab.active{background:var(--card); box-shadow:var(--shadow); border-color:var(--line); transform:translateY(-2px);}
+.folder-tab:not(.active){background:#E4E8E2; color:var(--ink-soft);}
+.folder-tab.pinned:not(.active){background:#DCE6E2; color:var(--teal-dark);}
+.folder-tab .tab-name{font-family:'Fraunces', serif; font-weight:600; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px;}
+.tab-dots{display:flex; gap:3px; margin-top:5px; align-items:center;}
+.tab-dot{width:6px;height:6px;border-radius:50%;}
+.tab-dot.g{background:var(--green);} .tab-dot.o{background:var(--orange);} .tab-dot.r{background:var(--red);}
+.tab-dot.count{font-family:'IBM Plex Mono', monospace; font-size:9px; color:var(--ink-faint); margin-left:2px;}
+
+.add-folder-tab{
+  flex:0 0 auto; min-width:100px; border:1.5px dashed var(--line); border-radius:8px 8px 0 0;
+  background:transparent; color:var(--ink-soft); font-family:'IBM Plex Sans', sans-serif; font-size:13px;
+  cursor:pointer; padding:9px 12px;
+}
+.add-folder-tab:hover{border-color:var(--teal); color:var(--teal);}
+
+.new-row{display:flex; gap:8px; margin:0 2px 16px; align-items:center; flex-wrap:wrap;}
+.new-row input{flex:1; min-width:140px;}
+.new-row .btn-mini{white-space:nowrap;}
+
+/* ---------- main card ---------- */
+.main-card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 16px 22px;}
+.view-header{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; flex-wrap:wrap;}
+.view-header h2{font-size:19px; margin:0; font-weight:600; cursor:text; border-bottom:1px dashed transparent; padding-bottom:2px;}
+.view-header h2:hover{border-bottom-color:var(--line);}
+.view-header input.rename-input{font-family:'Fraunces', serif; font-size:19px; font-weight:600; border:none; border-bottom:1.5px solid var(--teal); background:transparent; padding:0 0 2px; outline:none; color:var(--ink);}
+.header-actions{display:flex; gap:8px; align-items:center;}
+.view-note{font-size:12px; color:var(--ink-faint); margin:2px 2px 16px;}
+
+/* ---------- buttons / inputs ---------- */
+button{font-family:inherit; cursor:pointer;}
+.btn{border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:7px; padding:7px 12px; font-size:12.5px; font-weight:500; transition:background .12s ease, border-color .12s ease;}
+.btn:hover{border-color:var(--teal); color:var(--teal-dark);}
+.btn-primary{background:var(--teal); color:#fff; border-color:var(--teal);}
+.btn-primary:hover{background:var(--teal-dark); border-color:var(--teal-dark); color:#fff;}
+.btn-mini{padding:5px 9px; font-size:11.5px; border-radius:6px;}
+.btn-danger{border-color:var(--red); color:var(--red);}
+.btn-danger:hover{background:var(--red-bg); color:var(--red);}
+.btn-danger.confirming{background:var(--red); color:#fff;}
+input, select{font-family:'IBM Plex Sans', sans-serif; border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; color:var(--ink); background:#fff;}
+input:focus, select:focus{outline:2px solid var(--teal-bg); border-color:var(--teal);}
+
+/* ---------- J-lists (listes de J) ---------- */
+.jlist-card{background:var(--paper); border-radius:9px; padding:12px 14px; margin-bottom:12px;}
+.jlist-card-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
+.jlist-name{font-family:'Fraunces', serif; font-weight:600; font-size:15px; cursor:text; border-bottom:1px dashed transparent;}
+.jlist-name:hover{border-bottom-color:var(--line);}
+.jlist-name-input{font-family:'Fraunces', serif; font-weight:600; font-size:15px; border:none; border-bottom:1.5px solid var(--teal); background:transparent; outline:none;}
+.jlist-usage{font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-faint);}
+.jlist-chips{display:flex; flex-wrap:wrap; align-items:center; gap:6px;}
+.interval-chip{display:flex; align-items:center; gap:5px; background:var(--teal-bg); color:var(--teal-dark); border-radius:20px; padding:4px 6px 4px 10px; font-family:'IBM Plex Mono', monospace; font-size:12px; font-weight:500;}
+.interval-chip button{border:none; background:transparent; color:var(--teal-dark); width:16px; height:16px; border-radius:50%; font-size:12px; line-height:1; display:flex; align-items:center; justify-content:center; opacity:.6;}
+.interval-chip button:hover{opacity:1; background:rgba(255,255,255,.5);}
+.add-interval{display:flex; gap:4px; align-items:center;}
+.add-interval input{width:52px; padding:5px 6px; font-family:'IBM Plex Mono', monospace;}
+.add-list-row{margin-top:4px;}
+
+/* ---------- table ---------- */
+.table-wrap{overflow-x:auto; margin-bottom:8px; border:1px solid var(--line); border-radius:8px;}
+table{border-collapse:collapse; width:100%; min-width:620px;}
+thead th{background:var(--paper); font-family:'IBM Plex Mono', monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:600; text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap;}
+tbody td{padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+tbody tr:last-child td{border-bottom:none;}
+tbody tr:hover{background:#FBFCFB;}
+.col-name input{width:100%; min-width:120px; border:none; background:transparent; font-weight:500; padding:4px 2px;}
+.col-name input:focus{background:#fff; border:1px solid var(--teal); outline:none;}
+.col-date input{width:126px; font-family:'IBM Plex Mono', monospace; font-size:12px;}
+.col-list select{min-width:130px;}
+
+.diff-swatches{display:flex; gap:5px;}
+.diff-dot{width:20px; height:20px; border-radius:50%; border:2px solid transparent; cursor:pointer; opacity:.45; transition:opacity .12s ease, transform .12s ease;}
+.diff-dot:hover{opacity:.8; transform:scale(1.08);}
+.diff-dot.active{opacity:1; border-color:var(--ink); transform:scale(1.05);}
+.diff-dot.g{background:var(--green);} .diff-dot.o{background:var(--orange);} .diff-dot.r{background:var(--red);}
+
+.rev-chips{display:flex; flex-wrap:wrap; gap:4px; max-width:260px;}
+.rev-chip{display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:3px 7px; border-radius:6px; background:var(--paper); font-family:'IBM Plex Mono', monospace; font-size:11px;}
+.rev-chip .rj{font-weight:600; color:var(--ink-soft);}
+.rev-chip .rd{color:var(--ink-faint);}
+.rev-chip.overdue{background:var(--red-bg);}
+.rev-chip.overdue .rd{color:var(--red); font-weight:600;}
+.rev-chip.done{opacity:.5;}
+.rev-chip.done .rd, .rev-chip.done .rj{text-decoration:line-through;}
+.rev-chip.shifted .rd::after{content:' *'; color:var(--amber);}
+.rev-empty{color:var(--ink-faint); font-size:12px;}
+
+.row-del{color:var(--ink-faint); border:none; background:transparent; padding:4px 8px; font-size:14px;}
+.row-del:hover{color:var(--red);}
+.add-course-row{margin:12px 2px 4px;}
+.empty-table-note{padding:22px 10px; text-align:center; color:var(--ink-faint); font-size:13px;}
+
+/* ---------- calendar / agenda ---------- */
+.calendar-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+.calendar-header .month-label{font-family:'Fraunces', serif; font-size:16px; font-weight:600; text-transform:capitalize;}
+.calendar-nav{display:flex; gap:6px; align-items:center;}
+.calendar-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:14px;}
+.cal-dow{font-family:'IBM Plex Mono', monospace; font-size:10px; text-align:center; color:var(--ink-faint); padding-bottom:2px; text-transform:uppercase;}
+.cal-day{aspect-ratio:1/1; min-height:40px; border-radius:7px; border:1px solid transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; background:var(--paper); position:relative; font-family:'IBM Plex Mono', monospace; font-size:12px;}
+.cal-day.weekend{background:#E6EBE4;}
+.cal-day.outside{opacity:.28; cursor:default;}
+.cal-day.today{border-color:var(--teal); font-weight:700;}
+.cal-day.selected{background:var(--teal); color:#fff;}
+.cal-day.has-events:not(.selected){background:#fff; border-color:var(--line);}
+.cal-day .dots{display:flex; gap:2px; margin-top:2px; position:absolute; bottom:5px;}
+.cal-day .dots span{width:4px; height:4px; border-radius:50%;}
+
+.agenda-list{display:flex; flex-direction:column; gap:6px;}
+.agenda-empty{color:var(--ink-faint); font-size:12.5px; padding:6px 2px;}
+.agenda-item{display:flex; align-items:center; gap:9px; background:var(--paper); border-radius:7px; padding:8px 10px;}
+.agenda-item .adiff{width:9px; height:9px; border-radius:50%; flex:0 0 auto;}
+.agenda-item .ainfo{flex:1; min-width:0;}
+.agenda-item .aname{font-weight:500; display:block;}
+.agenda-item .asub{font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-faint);}
+.agenda-item .ainterval{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); white-space:nowrap;}
+.agenda-item.done{opacity:.5;}
+.agenda-item.done .aname{text-decoration:line-through;}
+.load-note{font-size:11px; color:var(--ink-faint); margin:-4px 0 14px 2px;}
+
+.empty-state{text-align:center; padding:50px 20px; color:var(--ink-soft);}
+.empty-state h2{font-size:20px; margin-bottom:6px;}
+.empty-state p{font-size:13px; color:var(--ink-faint); margin-bottom:18px;}
+
+.legend{display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:11.5px; color:var(--ink-soft); margin:10px 0 16px;}
+.legend span{display:inline-flex; align-items:center; gap:5px;}
+.legend i{width:9px; height:9px; border-radius:50%; display:inline-block;}
+
+@media (max-width:520px){
+  .col-date input{width:102px;}
+  .main-card{padding:14px 10px 18px;}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  var state = {
+    subjects: [],
+    data: {},         // subjectId -> {courses:[...]}
+    jlists: [],        // [{id,name,days:[...]}]
+    currentView: 'agenda', // 'agenda' | 'lists' | subjectId
+    addingSubject: false,
+    addingList: false,
+    editingSubjectId: null,
+    editingListId: null,
+    confirmDeleteSubject: null,
+    confirmDeleteCourseId: null,
+    confirmDeleteListId: null,
+    calendarMonth: startOfMonth(new Date()),
+    selectedDay: null
+  };
+
+  var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
+  var MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+  var WEEKDAY_CAP = 5, WEEKEND_CAP = 7; // capacité pondérée indicative (1=cours vert, 2=orange, 3=rouge)
+
+  function uid(p){ return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+  function toISODate(d){ var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
+  function parseISO(s){ var p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); }
+  function addDays(dateStr, days){ var d=parseISO(dateStr); d.setDate(d.getDate()+Number(days)); return toISODate(d); }
+  function daysBetween(a,b){ return Math.round((parseISO(a)-parseISO(b))/86400000); }
+  function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function fmtFR(iso){ var d=parseISO(iso); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); }
+  function isWeekend(iso){ var day=parseISO(iso).getDay(); return day===0||day===6; }
+
+  var TODAY_ISO = toISODate(new Date());
+
+  // ---------------- storage ----------------
+  async function safeGet(key){ try{ var r=await window.storage.get(key,false); return r?r.value:null; }catch(e){ return null; } }
+  async function safeSet(key,value){ try{ await window.storage.set(key,value,false); }catch(e){} }
+  async function safeDelete(key){ try{ await window.storage.delete(key,false); }catch(e){} }
+
+  async function loadSubjects(){ var raw=await safeGet('subjects'); state.subjects = raw?JSON.parse(raw):[]; }
+  async function persistSubjects(){ await safeSet('subjects', JSON.stringify(state.subjects)); }
+  async function loadSubjectData(id){
+    if(state.data[id]) return state.data[id];
+    var raw = await safeGet('subject:'+id);
+    var d = raw ? JSON.parse(raw) : {courses:[]};
+    state.data[id]=d; return d;
+  }
+  async function persistSubjectData(id){ await safeSet('subject:'+id, JSON.stringify(state.data[id])); }
+
+  async function loadJLists(){
+    var raw = await safeGet('jlists');
+    if(raw){ state.jlists = JSON.parse(raw); return; }
+    state.jlists = [{id:uid('jl'), name:'Classique (J3·J10·J30·J75)', days:[3,10,30,75]}];
+    await persistJLists();
+  }
+  async function persistJLists(){ await safeSet('jlists', JSON.stringify(state.jlists)); }
+
+  // ---------------- scheduling engine ----------------
+  function toleranceFor(J){
+    if(J<=0) return 0;
+    var anchors=[[3,1],[10,2],[30,3],[75,5]];
+    if(J<=anchors[0][0]) return anchors[0][1];
+    for(var i=0;i<anchors.length-1;i++){
+      var a=anchors[i], b=anchors[i+1];
+      if(J>=a[0] && J<=b[0]){ var t=(J-a[0])/(b[0]-a[0]); return Math.round(a[1]+t*(b[1]-a[1])); }
+    }
+    var last2=anchors[anchors.length-2], last=anchors[anchors.length-1];
+    var slope=(last[1]-last2[1])/(last[0]-last2[0]);
+    return Math.max(1, Math.round(last[1]+slope*(J-last[0])));
+  }
+  function weightFor(diff){ return diff==='red'?3:diff==='orange'?2:1; }
+
+  function buildEvents(){
+    var events=[];
+    state.subjects.forEach(function(s){
+      var courses = (state.data[s.id]||{courses:[]}).courses;
+      courses.forEach(function(c){
+        if(!c.dateLearned) return;
+        var list = state.jlists.find(function(l){return l.id===c.listId;});
+        if(!list) return;
+        list.days.forEach(function(J){
+          var target = addDays(c.dateLearned, J);
+          events.push({
+            courseId:c.id, subjectId:s.id, subjectName:s.name, courseName:c.name||'(sans nom)',
+            interval:J, weight:weightFor(c.difficulty), difficulty:c.difficulty,
+            target:target, tol:toleranceFor(J),
+            done: !!(c.done && c.done[J])
+          });
+        });
+      });
+    });
+    return events;
+  }
+
+  function scheduleEvents(events){
+    var sorted = events.slice().sort(function(a,b){
+      if(a.interval!==b.interval) return a.interval-b.interval; // J0 > J3 > J10 ... priorité aux J courts
+      if(a.target!==b.target) return a.target<b.target?-1:1;
+      return a.courseId<b.courseId?-1:1;
+    });
+    var loads = {};
+    var capOf = function(date){ return isWeekend(date)?WEEKEND_CAP:WEEKDAY_CAP; };
+    var loadOf = function(date){ return loads[date]||0; };
+    sorted.forEach(function(e){
+      var candidates=[];
+      for(var d=-e.tol; d<=e.tol; d++){ candidates.push(addDays(e.target,d)); }
+      candidates.sort(function(a,b){ return Math.abs(daysBetween(a,e.target))-Math.abs(daysBetween(b,e.target)); });
+      var chosen=null;
+      for(var i=0;i<candidates.length;i++){
+        var dte=candidates[i];
+        if(loadOf(dte)+e.weight<=capOf(dte)){ chosen=dte; break; }
+      }
+      if(!chosen){
+        var best=candidates[0], bestLoad=loadOf(best);
+        candidates.forEach(function(dte){ var ld=loadOf(dte); if(ld<bestLoad){ bestLoad=ld; best=dte; } });
+        chosen=best;
+      }
+      loads[chosen]=(loads[chosen]||0)+e.weight;
+      e.scheduled=chosen;
+    });
+    return sorted;
+  }
+
+  function getSchedule(){ return scheduleEvents(buildEvents()); }
+
+  // ---------------- actions: subjects ----------------
+  async function createSubject(name){
+    name=(name||'').trim(); if(!name) return;
+    var id=uid('subj');
+    state.subjects.push({id:id,name:name});
+    state.data[id]={courses:[]};
+    state.currentView=id; state.addingSubject=false;
+    await persistSubjects(); await persistSubjectData(id); render();
+  }
+  async function renameSubject(id,name){
+    name=(name||'').trim();
+    var s=state.subjects.find(function(s){return s.id===id;});
+    if(s&&name){ s.name=name; await persistSubjects(); }
+    state.editingSubjectId=null; render();
+  }
+  async function deleteSubject(id){
+    state.subjects=state.subjects.filter(function(s){return s.id!==id;});
+    delete state.data[id];
+    await persistSubjects(); await safeDelete('subject:'+id);
+    if(state.currentView===id) state.currentView='agenda';
+    state.confirmDeleteSubject=null; render();
+  }
+
+  // ---------------- actions: courses ----------------
+  async function addCourse(subjectId){
+    var d=await loadSubjectData(subjectId);
+    var defaultList = state.jlists.length? state.jlists[0].id : null;
+    d.courses.push({id:uid('c'), name:'', dateLearned:TODAY_ISO, difficulty:null, listId:defaultList, done:{}});
+    await persistSubjectData(subjectId); render();
+  }
+  async function updateCourse(subjectId, courseId, patch){
+    var d=state.data[subjectId];
+    var c=d.courses.find(function(c){return c.id===courseId;});
+    if(!c) return;
+    Object.assign(c,patch);
+    await persistSubjectData(subjectId);
+  }
+  async function deleteCourse(subjectId, courseId){
+    var d=state.data[subjectId];
+    d.courses=d.courses.filter(function(c){return c.id!==courseId;});
+    await persistSubjectData(subjectId);
+    state.confirmDeleteCourseId=null; render();
+  }
+  async function toggleDone(subjectId, courseId, interval){
+    var d=state.data[subjectId];
+    var c=d.courses.find(function(c){return c.id===courseId;});
+    if(!c) return;
+    c.done=c.done||{}; c.done[interval]=!c.done[interval];
+    await persistSubjectData(subjectId); render();
+  }
+
+  // ---------------- actions: J-lists ----------------
+  async function createList(name){
+    name=(name||'').trim(); if(!name) return;
+    state.jlists.push({id:uid('jl'), name:name, days:[]});
+    state.addingList=false;
+    await persistJLists(); render();
+  }
+  async function renameList(id,name){
+    name=(name||'').trim();
+    var l=state.jlists.find(function(l){return l.id===id;});
+    if(l&&name){ l.name=name; await persistJLists(); }
+    state.editingListId=null; render();
+  }
+  async function deleteList(id){
+    state.jlists=state.jlists.filter(function(l){return l.id!==id;});
+    await persistJLists();
+    var touched=[];
+    state.subjects.forEach(function(s){
+      var d=state.data[s.id]; if(!d) return;
+      d.courses.forEach(function(c){ if(c.listId===id){ c.listId=null; touched.push(s.id); } });
+    });
+    for(var i=0;i<touched.length;i++){ await persistSubjectData(touched[i]); }
+    state.confirmDeleteListId=null; render();
+  }
+  async function addIntervalToList(listId, value){
+    var n=parseInt(value,10);
+    if(isNaN(n)||n<0) return;
+    var l=state.jlists.find(function(l){return l.id===listId;});
+    if(l && l.days.indexOf(n)===-1){ l.days.push(n); l.days.sort(function(a,b){return a-b;}); await persistJLists(); render(); }
+  }
+  async function removeIntervalFromList(listId,n){
+    var l=state.jlists.find(function(l){return l.id===listId;});
+    if(l){ l.days=l.days.filter(function(x){return x!==n;}); await persistJLists(); render(); }
+  }
+
+  // ---------------- render helpers ----------------
+  var app=document.getElementById('app');
+  function escapeHTML(s){ return (s||'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function diffCounts(courses){
+    var c={g:0,o:0,r:0};
+    courses.forEach(function(course){
+      if(course.difficulty==='green')c.g++; else if(course.difficulty==='orange')c.o++; else if(course.difficulty==='red')c.r++;
+    });
+    return c;
+  }
+  function diffColor(diff){ return diff==='green'?'var(--green)':diff==='orange'?'var(--orange)':diff==='red'?'var(--red)':'var(--ink-faint)'; }
+
+  function renderTabs(){
+    var html='<div class="tabs-scroller">';
+    html+='<div class="folder-tab pinned'+(state.currentView==='agenda'?' active':'')+'" data-action="select-view" data-view="agenda"><div class="tab-name">📅 Agenda</div></div>';
+    html+='<div class="folder-tab pinned'+(state.currentView==='lists'?' active':'')+'" data-action="select-view" data-view="lists"><div class="tab-name">🗂 Listes de J</div></div>';
+    state.subjects.forEach(function(s){
+      var d=state.data[s.id]||{courses:[]};
+      var counts=diffCounts(d.courses||[]);
+      var active=state.currentView===s.id?' active':'';
+      html+='<div class="folder-tab'+active+'" data-action="select-view" data-view="'+s.id+'">'+
+        '<div class="tab-name">'+escapeHTML(s.name)+'</div>'+
+        '<div class="tab-dots">'+
+          (counts.g?'<span class="tab-dot g"></span>':'')+
+          (counts.o?'<span class="tab-dot o"></span>':'')+
+          (counts.r?'<span class="tab-dot r"></span>':'')+
+          '<span class="tab-dot count">'+(d.courses?d.courses.length:0)+'</span>'+
+        '</div></div>';
+    });
+    html+='<button class="add-folder-tab" data-action="show-add-subject">+ Dossier</button>';
+    html+='</div>';
+    if(state.addingSubject){
+      html+='<div class="new-row"><input type="text" id="new-subject-input" placeholder="Nom de la matière (ex. Cardiologie)" autofocus>'+
+        '<button class="btn btn-primary btn-mini" data-action="confirm-add-subject">Créer</button>'+
+        '<button class="btn btn-mini" data-action="cancel-add-subject">Annuler</button></div>';
+    }
+    return html;
+  }
+
+  // ---------------- agenda view (global) ----------------
+  function renderAgenda(){
+    var schedule=getSchedule();
+    var events={};
+    schedule.forEach(function(e){ (events[e.scheduled]=events[e.scheduled]||[]).push(e); });
+
+    var month=state.calendarMonth, y=month.getFullYear(), m=month.getMonth();
+    var first=new Date(y,m,1);
+    var startOffset=(first.getDay()+6)%7;
+    var daysInMonth=new Date(y,m+1,0).getDate();
+    var daysInPrev=new Date(y,m,0).getDate();
+
+    var html='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">Agenda global</h2></div>';
+    html+='<div class="view-note">Toutes matières confondues. Les dates sont légèrement ajustées (± quelques jours selon le J) pour répartir la charge sur la semaine — le week-end absorbe un peu plus. Un * indique une date décalée par rapport au J théorique.</div>';
+    html+='<div class="legend"><span><i style="background:var(--green)"></i>Facile</span><span><i style="background:var(--orange)"></i>Moyen</span><span><i style="background:var(--red)"></i>Difficile</span></div>';
+
+    html+='<div class="calendar-header"><div class="month-label">'+MONTHS[m]+' '+y+'</div>'+
+      '<div class="calendar-nav"><button class="btn btn-mini" data-action="cal-prev">&larr;</button>'+
+      '<button class="btn btn-mini" data-action="cal-today">Aujourd\'hui</button>'+
+      '<button class="btn btn-mini" data-action="cal-next">&rarr;</button></div></div>';
+
+    html+='<div class="calendar-grid">';
+    DOW.forEach(function(w){ html+='<div class="cal-dow">'+w+'</div>'; });
+    for(var i=0;i<startOffset;i++){ html+='<div class="cal-day outside">'+(daysInPrev-startOffset+i+1)+'</div>'; }
+    for(var day=1; day<=daysInMonth; day++){
+      var iso=toISODate(new Date(y,m,day));
+      var evs=events[iso]||[];
+      var cls='cal-day'+(isWeekend(iso)?' weekend':'');
+      if(iso===TODAY_ISO) cls+=' today';
+      if(iso===state.selectedDay) cls+=' selected';
+      if(evs.length) cls+=' has-events';
+      html+='<div class="'+cls+'" data-action="select-day" data-day="'+iso+'">'+day;
+      if(evs.length){
+        html+='<div class="dots">';
+        evs.slice(0,4).forEach(function(e){ html+='<span style="background:'+diffColor(e.difficulty)+'"></span>'; });
+        html+='</div>';
+      }
+      html+='</div>';
+    }
+    var totalCells=startOffset+daysInMonth, trailing=(7-(totalCells%7))%7;
+    for(var j=0;j<trailing;j++){ html+='<div class="cal-day outside">'+(j+1)+'</div>'; }
+    html+='</div>';
+
+    var selDay=state.selectedDay||TODAY_ISO;
+    var selEvs=(events[selDay]||[]).slice().sort(function(a,b){ return a.interval-b.interval; });
+    html+='<div class="calendar-header" style="margin-top:2px;"><div class="month-label" style="font-size:14px;">'+fmtFR(selDay)+(selDay===TODAY_ISO?' · aujourd\'hui':'')+'</div></div>';
+    html+='<div class="agenda-list">';
+    if(!selEvs.length){ html+='<div class="agenda-empty">Aucune révision prévue ce jour-là.</div>'; }
+    else{
+      selEvs.forEach(function(e){
+        var shifted = e.scheduled!==e.target;
+        html+='<div class="agenda-item'+(e.done?' done':'')+'" data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">'+
+          '<span class="adiff" style="background:'+diffColor(e.difficulty)+'"></span>'+
+          '<span class="ainfo"><span class="aname">'+escapeHTML(e.courseName)+'</span><span class="asub">'+escapeHTML(e.subjectName)+'</span></span>'+
+          '<span class="ainterval">J'+e.interval+(shifted?' *':'')+'</span>'+
+        '</div>';
+      });
+    }
+    html+='</div></div>';
+    return html;
+  }
+
+  // ---------------- J-lists view ----------------
+  function renderLists(){
+    var html='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">Listes de J</h2></div>';
+    html+='<div class="view-note">Crée des listes de révision réutilisables (ex. « J3·J10·J30·J75 », « Rapide J1·J7 »). Choisis ensuite la liste adaptée pour chaque cours.</div>';
+
+    if(!state.jlists.length){
+      html+='<div class="empty-table-note">Aucune liste pour le moment.</div>';
+    }
+    state.jlists.forEach(function(l){
+      var usageCount=0;
+      state.subjects.forEach(function(s){ (state.data[s.id]||{courses:[]}).courses.forEach(function(c){ if(c.listId===l.id) usageCount++; }); });
+      html+='<div class="jlist-card"><div class="jlist-card-head">';
+      if(state.editingListId===l.id){
+        html+='<input class="jlist-name-input" id="rename-list-input" type="text" value="'+escapeHTML(l.name)+'" autofocus>';
+      } else {
+        html+='<div class="jlist-name" data-action="edit-list-name" data-id="'+l.id+'">'+escapeHTML(l.name)+'</div>';
+      }
+      var confirming=state.confirmDeleteListId===l.id;
+      html+='<div class="header-actions"><span class="jlist-usage">'+usageCount+' cours</span>'+
+        '<button class="btn btn-danger btn-mini'+(confirming?' confirming':'')+'" data-action="'+(confirming?'delete-list':'confirm-delete-list')+'" data-id="'+l.id+'">'+(confirming?'Confirmer':'Supprimer')+'</button></div>';
+      html+='</div>';
+      html+='<div class="jlist-chips">';
+      l.days.forEach(function(n){
+        html+='<span class="interval-chip">J'+n+'<button data-action="remove-list-interval" data-list="'+l.id+'" data-n="'+n+'">✕</button></span>';
+      });
+      html+='<span class="add-interval"><input type="number" min="0" id="new-interval-'+l.id+'" placeholder="ex 21">'+
+        '<button class="btn btn-mini" data-action="add-list-interval" data-list="'+l.id+'">+ Ajouter</button></span>';
+      html+='</div></div>';
+    });
+
+    html+='<div class="add-list-row">';
+    if(state.addingList){
+      html+='<div class="new-row"><input type="text" id="new-list-input" placeholder="Nom de la liste (ex. Standard)" autofocus>'+
+        '<button class="btn btn-primary btn-mini" data-action="confirm-add-list">Créer</button>'+
+        '<button class="btn btn-mini" data-action="cancel-add-list">Annuler</button></div>';
+    } else {
+      html+='<button class="btn btn-primary btn-mini" data-action="show-add-list">+ Nouvelle liste</button>';
+    }
+    html+='</div></div>';
+    return html;
+  }
+
+  // ---------------- subject view ----------------
+  function renderSubject(subjectId){
+    var s=state.subjects.find(function(s){return s.id===subjectId;});
+    if(!s) return '<div class="main-card"><div class="empty-state"><p>Matière introuvable.</p></div></div>';
+    var d=state.data[subjectId]||{courses:[]};
+    var schedule=getSchedule();
+
+    var html='<div class="main-card"><div class="view-header">';
+    if(state.editingSubjectId===s.id){
+      html+='<input class="rename-input" id="rename-input" type="text" value="'+escapeHTML(s.name)+'" autofocus>';
+    } else {
+      html+='<h2 class="serif" data-action="edit-subject-name" data-id="'+s.id+'">'+escapeHTML(s.name)+'</h2>';
+    }
+    var confirmingSub=state.confirmDeleteSubject===s.id;
+    html+='<div class="header-actions"><button class="btn btn-danger btn-mini'+(confirmingSub?' confirming':'')+'" data-action="'+(confirmingSub?'delete-subject':'confirm-delete-subject')+'" data-id="'+s.id+'">'+(confirmingSub?'Confirmer suppression':'Supprimer le dossier')+'</button></div></div>';
+
+    html+='<div class="legend"><span><i style="background:var(--green)"></i>Facile</span><span><i style="background:var(--orange)"></i>Moyen</span><span><i style="background:var(--red)"></i>Difficile</span></div>';
+
+    if(!state.jlists.length){
+      html+='<div class="empty-table-note">Crée d\'abord une liste de J dans l\'onglet « 🗂 Listes de J ».</div></div>';
+      return html;
+    }
+
+    html+='<div class="table-wrap"><table><thead><tr><th>Cours</th><th>Appris le</th><th>Difficulté</th><th>Liste de J</th><th>Révisions</th><th></th></tr></thead><tbody>';
+
+    if(!d.courses.length){
+      html+='<tr><td colspan="6" class="empty-table-note">Aucun cours pour le moment. Ajoutez-en un ci-dessous.</td></tr>';
+    }
+
+    d.courses.forEach(function(c){
+      html+='<tr>';
+      html+='<td class="col-name"><input type="text" value="'+escapeHTML(c.name)+'" placeholder="Nom du cours" data-action="course-name" data-subject="'+s.id+'" data-id="'+c.id+'"></td>';
+      html+='<td class="col-date"><input type="date" value="'+c.dateLearned+'" data-action="course-date" data-subject="'+s.id+'" data-id="'+c.id+'"></td>';
+      html+='<td><div class="diff-swatches">';
+      ['green','orange','red'].forEach(function(col){
+        var letter=col==='green'?'g':col==='orange'?'o':'r';
+        var active=c.difficulty===col?' active':'';
+        html+='<div class="diff-dot '+letter+active+'" data-action="set-difficulty" data-subject="'+s.id+'" data-id="'+c.id+'" data-diff="'+col+'" title="'+col+'"></div>';
+      });
+      html+='</div></td>';
+      html+='<td class="col-list"><select data-action="course-list" data-subject="'+s.id+'" data-id="'+c.id+'">';
+      state.jlists.forEach(function(l){
+        html+='<option value="'+l.id+'"'+(c.listId===l.id?' selected':'')+'>'+escapeHTML(l.name)+'</option>';
+      });
+      html+='</select></td>';
+
+      html+='<td><div class="rev-chips">';
+      var courseEvs = schedule.filter(function(e){ return e.courseId===c.id; }).sort(function(a,b){return a.interval-b.interval;});
+      if(!c.dateLearned || !courseEvs.length){
+        html+='<span class="rev-empty">—</span>';
+      } else {
+        courseEvs.forEach(function(e){
+          var cls='rev-chip'+(e.done?' done':'')+((!e.done && e.scheduled<TODAY_ISO)?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
+          html+='<span class="'+cls+'" data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'">'+
+            '<span class="rj">J'+e.interval+'</span><span class="rd">'+fmtFR(e.scheduled)+'</span></span>';
+        });
+      }
+      html+='</div></td>';
+
+      var confirming=state.confirmDeleteCourseId===c.id;
+      html+='<td><button class="row-del" data-action="'+(confirming?'delete-course':'confirm-delete-course')+'" data-subject="'+s.id+'" data-id="'+c.id+'" title="Supprimer">'+(confirming?'confirmer ✕':'✕')+'</button></td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    html+='<div class="add-course-row"><button class="btn btn-primary btn-mini" data-action="add-course" data-subject="'+s.id+'">+ Ajouter un cours</button></div>';
+    html+='</div>';
+    return html;
+  }
+
+  function renderMain(){
+    if(state.currentView==='agenda') return renderAgenda();
+    if(state.currentView==='lists') return renderLists();
+    if(state.currentView && state.data[state.currentView]!==undefined) return renderSubject(state.currentView);
+    return renderAgenda();
+  }
+
+  function render(){
+    var html='<div class="app-title"><h1>Classeur de révisions</h1><span class="mono">répétition espacée</span></div>';
+    html+='<div class="app-sub">Un agenda commun à toutes les matières, avec répartition intelligente de la charge.</div>';
+    html+=renderTabs();
+    html+=renderMain();
+    app.innerHTML=html;
+
+    if(state.addingSubject){
+      var input=document.getElementById('new-subject-input');
+      if(input){ input.focus(); input.addEventListener('keydown', function(e){ if(e.key==='Enter'){ createSubject(input.value); } }); }
+    }
+    if(state.editingSubjectId){
+      var rinput=document.getElementById('rename-input');
+      if(rinput){ rinput.focus(); rinput.select();
+        rinput.addEventListener('keydown', function(e){ if(e.key==='Enter'){ renameSubject(state.editingSubjectId, rinput.value); } });
+        rinput.addEventListener('blur', function(){ renameSubject(state.editingSubjectId, rinput.value); });
+      }
+    }
+    if(state.addingList){
+      var linput=document.getElementById('new-list-input');
+      if(linput){ linput.focus(); linput.addEventListener('keydown', function(e){ if(e.key==='Enter'){ createList(linput.value); } }); }
+    }
+    if(state.editingListId){
+      var rlinput=document.getElementById('rename-list-input');
+      if(rlinput){ rlinput.focus(); rlinput.select();
+        rlinput.addEventListener('keydown', function(e){ if(e.key==='Enter'){ renameList(state.editingListId, rlinput.value); } });
+        rlinput.addEventListener('blur', function(){ renameList(state.editingListId, rlinput.value); });
+      }
+    }
+  }
+
+  // ---------------- events ----------------
+  app.addEventListener('click', function(e){
+    var el=e.target.closest('[data-action]');
+    if(!el) return;
+    var action=el.dataset.action;
+
+    if(action==='select-view'){ state.currentView=el.dataset.view; state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
+      if(el.dataset.view!=='agenda' && el.dataset.view!=='lists'){ loadSubjectData(el.dataset.view).then(render); } else { render(); } }
+    else if(action==='show-add-subject'){ state.addingSubject=true; render(); }
+    else if(action==='cancel-add-subject'){ state.addingSubject=false; render(); }
+    else if(action==='confirm-add-subject'){ createSubject(document.getElementById('new-subject-input').value); }
+    else if(action==='edit-subject-name'){ state.editingSubjectId=el.dataset.id; render(); }
+    else if(action==='confirm-delete-subject'){ state.confirmDeleteSubject=el.dataset.id; render(); setTimeout(function(){ if(state.confirmDeleteSubject===el.dataset.id){ state.confirmDeleteSubject=null; render(); } },3000); }
+    else if(action==='delete-subject'){ deleteSubject(el.dataset.id); }
+
+    else if(action==='add-course'){ addCourse(el.dataset.subject); }
+    else if(action==='confirm-delete-course'){ state.confirmDeleteCourseId=el.dataset.id; render(); setTimeout(function(){ if(state.confirmDeleteCourseId===el.dataset.id){ state.confirmDeleteCourseId=null; render(); } },3000); }
+    else if(action==='delete-course'){ deleteCourse(el.dataset.subject, el.dataset.id); }
+    else if(action==='set-difficulty'){
+      var d=state.data[el.dataset.subject];
+      var c=d.courses.find(function(c){return c.id===el.dataset.id;});
+      var newDiff=c.difficulty===el.dataset.diff?null:el.dataset.diff;
+      updateCourse(el.dataset.subject, el.dataset.id, {difficulty:newDiff}).then(render);
+    }
+    else if(action==='toggle-done'){ toggleDone(el.dataset.subject, el.dataset.course, Number(el.dataset.interval)); }
+
+    else if(action==='show-add-list'){ state.addingList=true; render(); }
+    else if(action==='cancel-add-list'){ state.addingList=false; render(); }
+    else if(action==='confirm-add-list'){ createList(document.getElementById('new-list-input').value); }
+    else if(action==='edit-list-name'){ state.editingListId=el.dataset.id; render(); }
+    else if(action==='confirm-delete-list'){ state.confirmDeleteListId=el.dataset.id; render(); setTimeout(function(){ if(state.confirmDeleteListId===el.dataset.id){ state.confirmDeleteListId=null; render(); } },3000); }
+    else if(action==='delete-list'){ deleteList(el.dataset.id); }
+    else if(action==='remove-list-interval'){ removeIntervalFromList(el.dataset.list, Number(el.dataset.n)); }
+    else if(action==='add-list-interval'){ var iv=document.getElementById('new-interval-'+el.dataset.list).value; addIntervalToList(el.dataset.list, iv); }
+
+    else if(action==='cal-prev'){ state.calendarMonth=new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth()-1, 1); render(); }
+    else if(action==='cal-next'){ state.calendarMonth=new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth()+1, 1); render(); }
+    else if(action==='cal-today'){ state.calendarMonth=startOfMonth(new Date()); state.selectedDay=TODAY_ISO; render(); }
+    else if(action==='select-day'){ state.selectedDay=el.dataset.day; render(); }
+  });
+
+  app.addEventListener('change', function(e){
+    var el=e.target.closest('[data-action]');
+    if(!el) return;
+    var action=el.dataset.action;
+    if(action==='course-name'){ updateCourse(el.dataset.subject, el.dataset.id, {name:el.value}); }
+    else if(action==='course-date'){ updateCourse(el.dataset.subject, el.dataset.id, {dateLearned:el.value}).then(render); }
+    else if(action==='course-list'){ updateCourse(el.dataset.subject, el.dataset.id, {listId:el.value}).then(render); }
+  });
+
+  // ---------------- init ----------------
+  async function init(){
+    app.innerHTML='<div class="app-title"><h1>Classeur de révisions</h1></div><div class="main-card"><div class="empty-state"><p>Chargement…</p></div></div>';
+    await loadJLists();
+    await loadSubjects();
+    for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
+    state.selectedDay=TODAY_ISO;
+    render();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
