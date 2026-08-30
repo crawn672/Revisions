@@ -8,30 +8,30 @@
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root{
-  --paper:#EEF1EC;
+  --paper:#F2F3FB;
   --card:#FFFFFF;
-  --ink:#1C2B3A;
-  --ink-soft:#5B6B76;
-  --ink-faint:#8E9AA3;
-  --line:#D9E0DA;
-  --teal:#2F6F63;
+  --ink:#20243A;
+  --ink-soft:#626780;
+  --ink-faint:#9296AA;
+  --line:#DDE0EF;
+  --teal:#5B5BD6;
   --teal-dark:#1F4F46;
-  --teal-bg:#E1EEEA;
-  --amber:#B98B2E;
-  --amber-bg:#F6EEDC;
-  --green:#4C9A6A;
-  --green-bg:#E4F3E9;
-  --orange:#DA8A3B;
-  --orange-bg:#FBEFDE;
-  --red:#C94C5C;
-  --red-bg:#FBE5E8;
+  --teal-bg:#E9E9FB;
+  --amber:#8B78D6;
+  --amber-bg:#F0EDFC;
+  --green:#4C9A7A;
+  --green-bg:#E5F5EE;
+  --orange:#C878D8;
+  --orange-bg:#F8EAF8;
+  --red:#A956C7;
+  --red-bg:#F4E7FA;
   --radius:10px;
   --shadow:0 1px 2px rgba(28,43,58,.06), 0 4px 14px rgba(28,43,58,.05);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
-  background:var(--paper); color:var(--ink);
+  background:linear-gradient(180deg,#F5F6FC 0%,var(--paper) 100%); color:var(--ink);
   font-family:'IBM Plex Sans', sans-serif; font-size:14px; line-height:1.45;
   -webkit-font-smoothing:antialiased;
 }
@@ -210,6 +210,44 @@ tbody tr:hover{background:#FBFCFB;}
   .col-date input{width:102px;}
   .main-card{padding:14px 10px 18px;}
 }
+
+/* ---------- accueil + navigation médecine ---------- */
+.home-card{
+  background:linear-gradient(135deg,#FFFFFF 0%,#F1F0FF 100%);
+  border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);
+  padding:28px 22px; margin-bottom:14px;
+}
+.home-badge{
+  display:inline-flex; align-items:center; gap:7px; padding:5px 9px;
+  border-radius:999px; background:var(--teal-bg); color:var(--teal-dark);
+  font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600;
+  text-transform:uppercase; letter-spacing:.05em;
+}
+.home-card h2{font-size:27px; margin:12px 0 5px;}
+.home-card p{color:var(--ink-soft); margin:0; max-width:650px;}
+.home-heart{color:#6B63D9;}
+.matter-list{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px;}
+.matter-card{
+  border:1px solid var(--line); background:#fff; border-radius:10px; padding:13px;
+  cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.matter-card:hover{transform:translateY(-1px); box-shadow:var(--shadow); border-color:#B9BAE8;}
+.matter-card-title{font-family:'Fraunces',serif; font-weight:600; font-size:15px;}
+.matter-card-meta{font-family:'IBM Plex Mono',monospace; color:var(--ink-faint); font-size:10.5px; margin-top:5px;}
+.nav-menu{
+  display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0 14px;
+}
+.nav-select-wrap{position:relative; width:min(100%,360px);}
+.nav-select-wrap select{
+  width:100%; padding:10px 38px 10px 12px; border-radius:9px; font-weight:600;
+  border-color:#C9CBE7; background:#fff;
+}
+.back-home{white-space:nowrap;}
+@media(max-width:520px){
+  .nav-menu{align-items:stretch; flex-direction:column;}
+  .back-home{width:100%;}
+}
+
 </style>
 </head>
 <body>
@@ -237,7 +275,7 @@ tbody tr:hover{background:#FBFCFB;}
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
   var MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
-  var WEEKDAY_CAP = 5, WEEKEND_CAP = 7; // capacité pondérée indicative (1=cours vert, 2=orange, 3=rouge)
+  var WEEKDAY_CAP = 12, WEEKEND_CAP = 12; // capacité quotidienne : 12 cours verts équivalents (orange=2, rouge=3)
 
   function uid(p){ return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
   function toISODate(d){ var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
@@ -456,18 +494,20 @@ tbody tr:hover{background:#FBFCFB;}
   function diffColor(diff){ return diff==='green'?'var(--green)':diff==='orange'?'var(--orange)':diff==='red'?'var(--red)':'var(--ink-faint)'; }
 
   function renderTabs(){
-    var html='<div class="main-nav">';
-    html+='<label class="menu-label" for="main-menu">☰ Menu</label>';
-    html+='<select id="main-menu" class="main-menu" data-action="navigate-menu">';
-    [
-      ['home','Accueil'],
-      ['lists','🗂 Listes de J'],
-      ['agenda','📅 Agenda'],
-      ['subjects','📚 Matières']
-    ].forEach(function(item){
-      html+='<option value="'+item[0]+'"'+(state.currentView===item[0]?' selected':'')+'>'+item[1]+'</option>';
+    var html='<div class="nav-menu">';
+    html+='<div class="nav-select-wrap"><select data-action="nav-select">';
+    html+='<option value="home"'+(state.currentView==='home'?' selected':'')+'>🏠 Accueil</option>';
+    html+='<option value="lists"'+(state.currentView==='lists'?' selected':'')+'>📚 Listes de J</option>';
+    html+='<option value="agenda"'+(state.currentView==='agenda'?' selected':'')+'>📅 Agenda</option>';
+    html+='<option value="subjects"'+(state.currentView==='subjects'?' selected':'')+'>🩺 Matières</option>';
+    state.subjects.forEach(function(s){
+      html+='<option value="subject:'+s.id+'"'+(state.currentView===s.id?' selected':'')+'>↳ '+escapeHTML(s.name)+'</option>';
     });
     html+='</select></div>';
+    if(state.currentView!=='home'){
+      html+='<button class="btn back-home" data-action="select-view" data-view="home">🏠 Accueil</button>';
+    }
+    html+='</div>';
 
     if(state.addingSubject){
       html+='<div class="new-row"><input type="text" id="new-subject-input" placeholder="Nom de la matière (ex. Cardiologie)" autofocus>'+
@@ -478,35 +518,35 @@ tbody tr:hover{background:#FBFCFB;}
   }
 
   function renderHome(){
-    var html='<div class="main-card home-card">';
-    html+='<div class="home-icon">📚</div>';
-    html+='<h2 class="serif">Classeur de révisions</h2>';
-    html+='<p>Organise tes cours et tes révisions avec la répétition espacée.</p>';
-    html+='<div class="home-actions">';
-    html+='<button class="btn btn-primary" data-action="select-view" data-view="agenda">📅 Ouvrir l’agenda</button>';
-    html+='<button class="btn" data-action="select-view" data-view="subjects">📚 Voir les matières</button>';
+    var html='<div class="home-card">';
+    html+='<span class="home-badge">🩺 Révisions médicales</span>';
+    html+='<h2>Classeur de révisions</h2>';
+    html+='<p>Organise tes cours, tes listes de J et ton agenda de révisions au même endroit.</p>';
     html+='</div>';
-    html+='<p class="local-note">💾 Tes données sont enregistrées automatiquement dans le stockage local de ce navigateur. Elles restent privées à cet appareil / profil de navigateur.</p>';
-    html+='</div>';
+    html+='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">Que veux-tu faire ?</h2></div>';
+    html+='<div class="matter-list">';
+    html+='<div class="matter-card" data-action="select-view" data-view="agenda"><div class="matter-card-title">📅 Agenda</div><div class="matter-card-meta">Voir les révisions du jour</div></div>';
+    html+='<div class="matter-card" data-action="select-view" data-view="lists"><div class="matter-card-title">📚 Listes de J</div><div class="matter-card-meta">Gérer les répétitions espacées</div></div>';
+    html+='<div class="matter-card" data-action="select-view" data-view="subjects"><div class="matter-card-title">🩺 Matières</div><div class="matter-card-meta">'+state.subjects.length+' matière(s)</div></div>';
+    html+='</div></div>';
     return html;
   }
 
   function renderSubjects(){
     var html='<div class="main-card">';
     html+='<div class="view-header"><h2 class="serif">Matières</h2><button class="btn btn-primary btn-mini" data-action="show-add-subject">+ Ajouter une matière</button></div>';
-    html+='<div class="view-note">Choisis une matière pour afficher tous ses cours et leurs dates de révision.</div>';
+    html+='<div class="view-note">Choisis une matière pour afficher uniquement ses cours.</div>';
     if(!state.subjects.length){
-      html+='<div class="empty-state"><h2>Aucune matière</h2><p>Commence par créer ta première matière.</p><button class="btn btn-primary" data-action="show-add-subject">+ Ajouter une matière</button></div>';
+      html+='<div class="empty-state"><h2>Aucune matière</h2><p>Commence par ajouter ta première matière.</p></div>';
     } else {
-      html+='<div class="subject-grid">';
+      html+='<div class="matter-list">';
       state.subjects.forEach(function(s){
         var d=state.data[s.id]||{courses:[]};
-        var counts=diffCounts(d.courses||[]);
-        html+='<button class="subject-card" data-action="select-view" data-view="'+s.id+'">';
-        html+='<span class="subject-card-name">'+escapeHTML(s.name)+'</span>';
-        html+='<span class="subject-card-meta">'+(d.courses?d.courses.length:0)+' cours';
-        if(counts.g||counts.o||counts.r) html+=' · '+(counts.g?'faciles '+counts.g:'')+(counts.o?' · moyens '+counts.o:'')+(counts.r?' · difficiles '+counts.r:'');
-        html+='</span></button>';
+        html+='<div class="matter-card" data-action="select-view" data-view="'+s.id+'">';
+        html+='<div class="matter-card-title">'+escapeHTML(s.name)+'</div>';
+        html+='<div class="matter-card-meta">'+d.courses.length+' cours</div>';
+        html+='</div>';
       });
       html+='</div>';
     }
@@ -699,6 +739,7 @@ tbody tr:hover{background:#FBFCFB;}
   }
 
   function render(){
+    TODAY_ISO = toISODate(new Date());
     var html='<div class="app-title"><h1>Classeur de révisions</h1><span class="mono">répétition espacée</span></div>';
     html+='<div class="app-sub">Révisions espacées · sauvegarde automatique locale</div>';
     html+=renderTabs();
@@ -780,6 +821,17 @@ tbody tr:hover{background:#FBFCFB;}
     var el=e.target.closest('[data-action]');
     if(!el) return;
     var action=el.dataset.action;
+    if(action==='nav-select'){
+      var v=el.value;
+      if(v.indexOf('subject:')===0) v=v.slice(8);
+      state.currentView=v;
+      if(state.currentView && state.data[state.currentView]!==undefined){
+        loadSubjectData(state.currentView).then(render);
+      } else {
+        render();
+      }
+      return;
+    }
     if(action==='navigate-menu'){
       state.currentView=el.value;
       state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
