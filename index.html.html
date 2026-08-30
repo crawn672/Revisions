@@ -8,30 +8,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root{
-  --paper:#EEF1EC;
+  --paper:#EEF1FB;
   --card:#FFFFFF;
-  --ink:#1C2B3A;
-  --ink-soft:#5B6B76;
-  --ink-faint:#8E9AA3;
-  --line:#D9E0DA;
-  --teal:#2F6F63;
-  --teal-dark:#1F4F46;
-  --teal-bg:#E1EEEA;
-  --amber:#B98B2E;
-  --amber-bg:#F6EEDC;
-  --green:#4C9A6A;
-  --green-bg:#E4F3E9;
-  --orange:#DA8A3B;
-  --orange-bg:#FBEFDE;
-  --red:#C94C5C;
-  --red-bg:#FBE5E8;
+  --ink:#1E2748;
+  --ink-soft:#5C6A93;
+  --ink-faint:#98A2C3;
+  --line:#DCE1F5;
+  --teal:#3C5FD9;
+  --teal-dark:#28409E;
+  --teal-bg:#E4E9FC;
+  --amber:#7C4FC4;
+  --amber-bg:#EFE6FA;
+  --green:#4C9A82;
+  --green-bg:#E1F3ED;
+  --orange:#8A63D2;
+  --orange-bg:#EEE7FA;
+  --red:#C94C7C;
+  --red-bg:#FBE5EF;
   --radius:10px;
-  --shadow:0 1px 2px rgba(28,43,58,.06), 0 4px 14px rgba(28,43,58,.05);
+  --shadow:0 1px 2px rgba(30,39,72,.07), 0 4px 16px rgba(52,64,150,.07);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
-  background:var(--paper); color:var(--ink);
+  background:
+    radial-gradient(1100px 500px at 8% -8%, rgba(124,79,196,.10), transparent 60%),
+    radial-gradient(1100px 600px at 100% 0%, rgba(60,95,217,.10), transparent 55%),
+    var(--paper);
+  color:var(--ink);
   font-family:'IBM Plex Sans', sans-serif; font-size:14px; line-height:1.45;
   -webkit-font-smoothing:antialiased;
 }
@@ -56,8 +60,8 @@ h1,h2,h3,.serif{font-family:'Fraunces', serif;}
   clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 100%, 0 100%);
 }
 .folder-tab.active{background:var(--card); box-shadow:var(--shadow); border-color:var(--line); transform:translateY(-2px);}
-.folder-tab:not(.active){background:#E4E8E2; color:var(--ink-soft);}
-.folder-tab.pinned:not(.active){background:#DCE6E2; color:var(--teal-dark);}
+.folder-tab:not(.active){background:#E2E6F6; color:var(--ink-soft);}
+.folder-tab.pinned:not(.active){background:#DBE0F6; color:var(--teal-dark);}
 .folder-tab .tab-name{font-family:'Fraunces', serif; font-weight:600; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px;}
 .tab-dots{display:flex; gap:3px; margin-top:5px; align-items:center;}
 .tab-dot{width:6px;height:6px;border-radius:50%;}
@@ -118,7 +122,7 @@ table{border-collapse:collapse; width:100%; min-width:620px;}
 thead th{background:var(--paper); font-family:'IBM Plex Mono', monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:600; text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap;}
 tbody td{padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
 tbody tr:last-child td{border-bottom:none;}
-tbody tr:hover{background:#FBFCFB;}
+tbody tr:hover{background:#F7F8FE;}
 .col-name input{width:100%; min-width:120px; border:none; background:transparent; font-weight:500; padding:4px 2px;}
 .col-name input:focus{background:#fff; border:1px solid var(--teal); outline:none;}
 .col-date input{width:126px; font-family:'IBM Plex Mono', monospace; font-size:12px;}
@@ -153,7 +157,7 @@ tbody tr:hover{background:#FBFCFB;}
 .calendar-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:14px;}
 .cal-dow{font-family:'IBM Plex Mono', monospace; font-size:10px; text-align:center; color:var(--ink-faint); padding-bottom:2px; text-transform:uppercase;}
 .cal-day{aspect-ratio:1/1; min-height:40px; border-radius:7px; border:1px solid transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; background:var(--paper); position:relative; font-family:'IBM Plex Mono', monospace; font-size:12px;}
-.cal-day.weekend{background:#E6EBE4;}
+.cal-day.weekend{background:#E5E9F8;}
 .cal-day.outside{opacity:.28; cursor:default;}
 .cal-day.today{border-color:var(--teal); font-weight:700;}
 .cal-day.selected{background:var(--teal); color:#fff;}
@@ -237,7 +241,7 @@ tbody tr:hover{background:#FBFCFB;}
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
   var MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
-  var WEEKDAY_CAP = 5, WEEKEND_CAP = 7; // capacité pondérée indicative (1=cours vert, 2=orange, 3=rouge)
+  var WEEKDAY_CAP = 12, WEEKEND_CAP = 12; // capacité pondérée : équivalent de 12 cours verts par jour (1=vert, 2=orange, 3=rouge)
 
   function uid(p){ return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
   function toISODate(d){ var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
@@ -467,6 +471,13 @@ tbody tr:hover{background:#FBFCFB;}
     ].forEach(function(item){
       html+='<option value="'+item[0]+'"'+(state.currentView===item[0]?' selected':'')+'>'+item[1]+'</option>';
     });
+    if(state.subjects.length){
+      html+='<optgroup label="Matières">';
+      state.subjects.forEach(function(s){
+        html+='<option value="'+s.id+'"'+(state.currentView===s.id?' selected':'')+'>'+escapeHTML(s.name)+'</option>';
+      });
+      html+='</optgroup>';
+    }
     html+='</select></div>';
 
     if(state.addingSubject){
