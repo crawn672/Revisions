@@ -245,6 +245,9 @@ tbody tr:hover{background:#F7F8FE;}
 .color-row label{flex:1; font-size:13px; font-weight:500;}
 .color-row input[type="color"]{width:42px; height:30px; padding:2px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer;}
 .color-row .swatch-value{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); min-width:60px; text-align:right;}
+.settings-sublist{margin-bottom:14px; padding:10px 10px 4px; background:#fff; border:1px solid var(--line); border-radius:8px;}
+.settings-sublist-title{font-family:'Fraunces', serif; font-weight:600; font-size:13px; margin-bottom:8px; color:var(--ink-soft);}
+.settings-sublist .color-row{background:var(--paper);}
 </style>
 </head>
 <body>
@@ -276,12 +279,15 @@ tbody tr:hover{background:#F7F8FE;}
 
   var DEFAULT_SETTINGS = {
     diffColors:{ green:'#4C9A82', orange:'#8A63D2', red:'#C94C7C' },
-    lateColors:{ '1':'#E0A526', '2':'#D64545' }
+    lateColors:{ '1':'#E0A526', '2':'#D64545' },
+    diffWeights:{ green:1, orange:2, red:3 },   // hiérarchie de la difficulté : 1 rouge = 3 verts, 1 orange = 2 verts (par défaut)
+    dailyCap: 12,                                // plafond pondéré de cours par jour
+    jPriority: {},                               // ordre d'importance des J, PAR LISTE : { listId: [J,...] }
+    jTolerance: {}                                // tolérance ± jours par J, PAR LISTE : { listId: { J: tol } }
   };
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
   var MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
-  var WEEKDAY_CAP = 12, WEEKEND_CAP = 12; // capacité pondérée : équivalent de 12 cours verts par jour (1=vert, 2=orange, 3=rouge)
 
   function uid(p){ return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
   function toISODate(d){ var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
@@ -337,21 +343,33 @@ tbody tr:hover{background:#F7F8FE;}
     var raw = await safeGet('settings');
     var s = {
       diffColors: Object.assign({}, DEFAULT_SETTINGS.diffColors),
-      lateColors: Object.assign({}, DEFAULT_SETTINGS.lateColors)
+      lateColors: Object.assign({}, DEFAULT_SETTINGS.lateColors),
+      diffWeights: Object.assign({}, DEFAULT_SETTINGS.diffWeights),
+      dailyCap: DEFAULT_SETTINGS.dailyCap,
+      jPriority: {},
+      jTolerance: {}
     };
     if(raw){
       try{
         var parsed = JSON.parse(raw);
         if(parsed.diffColors) Object.assign(s.diffColors, parsed.diffColors);
         if(parsed.lateColors) Object.assign(s.lateColors, parsed.lateColors);
+        if(parsed.diffWeights) Object.assign(s.diffWeights, parsed.diffWeights);
+        if(typeof parsed.dailyCap==='number' && parsed.dailyCap>0) s.dailyCap=parsed.dailyCap;
+        if(parsed.jPriority && typeof parsed.jPriority==='object' && !Array.isArray(parsed.jPriority)){
+          Object.keys(parsed.jPriority).forEach(function(lid){ s.jPriority[lid]=Array.isArray(parsed.jPriority[lid])?parsed.jPriority[lid].slice():[]; });
+        }
+        if(parsed.jTolerance && typeof parsed.jTolerance==='object'){
+          Object.keys(parsed.jTolerance).forEach(function(lid){ s.jTolerance[lid]=Object.assign({}, parsed.jTolerance[lid]); });
+        }
       } catch(e){}
     }
     state.settings = s;
   }
   async function persistSettings(){ await safeSet('settings', JSON.stringify(state.settings)); }
 
-  // ---------------- scheduling engine ----------------
-  function toleranceFor(J){
+  // Formule par défaut (avant réglage manuel) pour la tolérance d'un J donné.
+  function defaultToleranceFor(J){
     if(J<=0) return 0;
     var anchors=[[3,1],[10,2],[30,3],[75,5]];
     if(J<=anchors[0][0]) return anchors[0][1];
@@ -363,7 +381,54 @@ tbody tr:hover{background:#F7F8FE;}
     var slope=(last[1]-last2[1])/(last[0]-last2[0]);
     return Math.max(1, Math.round(last[1]+slope*(J-last[0])));
   }
-  function weightFor(diff){ return diff==='red'?3:diff==='orange'?2:1; }
+  // Maintient, pour CHAQUE liste de J, un ordre de priorité et des tolérances qui reflètent
+  // exactement les jours actuellement présents dans cette liste : ajoute les nouveaux jours
+  // (à la fin, donc priorité la plus basse par défaut), retire ceux qui n'existent plus,
+  // sans jamais casser l'ordre déjà choisi par l'utilisateur pour les jours qui restent.
+  // Nettoie aussi les entrées de listes supprimées.
+  async function syncSettingsWithJLists(){
+    if(!state.settings) return;
+    var changed=false;
+    var liveIds={};
+    state.jlists.forEach(function(l){
+      liveIds[l.id]=true;
+      var days=(l.days||[]).slice();
+      if(!state.settings.jPriority[l.id]){ state.settings.jPriority[l.id]=[]; changed=true; }
+      if(!state.settings.jTolerance[l.id]){ state.settings.jTolerance[l.id]={}; changed=true; }
+      var order=state.settings.jPriority[l.id];
+      var kept=order.filter(function(J){ return days.indexOf(J)!==-1; });
+      if(kept.length!==order.length){ changed=true; }
+      days.forEach(function(J){ if(kept.indexOf(J)===-1){ kept.push(J); changed=true; } });
+      state.settings.jPriority[l.id]=kept;
+      var tol=state.settings.jTolerance[l.id];
+      Object.keys(tol).forEach(function(k){ if(days.indexOf(Number(k))===-1){ delete tol[k]; changed=true; } });
+      days.forEach(function(J){ if(tol[J]===undefined){ tol[J]=defaultToleranceFor(J); changed=true; } });
+    });
+    Object.keys(state.settings.jPriority).forEach(function(lid){ if(!liveIds[lid]){ delete state.settings.jPriority[lid]; changed=true; } });
+    Object.keys(state.settings.jTolerance).forEach(function(lid){ if(!liveIds[lid]){ delete state.settings.jTolerance[lid]; changed=true; } });
+    if(changed) await persistSettings();
+  }
+
+  // ---------------- scheduling engine ----------------
+  function toleranceFor(J, listId){
+    var t=state.settings&&state.settings.jTolerance&&state.settings.jTolerance[listId]&&state.settings.jTolerance[listId][J];
+    return (t!==undefined && t!==null && t!=='') ? Number(t) : defaultToleranceFor(J);
+  }
+  function weightFor(diff){
+    var w=state.settings&&state.settings.diffWeights;
+    if(diff==='green') return (w&&w.green)||1;
+    if(diff==='orange') return (w&&w.orange)||2;
+    if(diff==='red') return (w&&w.red)||3;
+    return 1; // pas de difficulté choisie : poids neutre
+  }
+  // Rang de priorité (0 = le plus prioritaire, 1 = le moins prioritaire) d'un J
+  // au sein de SA PROPRE liste. Permet de comparer des événements issus de listes différentes.
+  function jPriorityRank(J, listId){
+    var order=(state.settings&&state.settings.jPriority&&state.settings.jPriority[listId])||[];
+    var idx=order.indexOf(J);
+    if(idx===-1) return 1;
+    return order.length>1 ? idx/(order.length-1) : 0;
+  }
 
   function buildEvents(){
     var events=[];
@@ -377,8 +442,8 @@ tbody tr:hover{background:#F7F8FE;}
           var target = addDays(c.dateLearned, J);
           events.push({
             courseId:c.id, subjectId:s.id, subjectName:s.name, courseName:c.name||'(sans nom)',
-            interval:J, weight:weightFor(c.difficulty), difficulty:c.difficulty,
-            target:target, tol:toleranceFor(J),
+            interval:J, listId:list.id, weight:weightFor(c.difficulty), difficulty:c.difficulty,
+            target:target, tol:toleranceFor(J, list.id),
             done: !!(c.done && c.done[J])
           });
         });
@@ -389,12 +454,15 @@ tbody tr:hover{background:#F7F8FE;}
 
   function scheduleEvents(events){
     var sorted = events.slice().sort(function(a,b){
-      if(a.interval!==b.interval) return a.interval-b.interval; // J0 > J3 > J10 ... priorité aux J courts
+      var ra=jPriorityRank(a.interval, a.listId), rb=jPriorityRank(b.interval, b.listId);
+      if(ra!==rb) return ra-rb; // priorité des J définie dans les réglages (par liste)
+      if(a.interval!==b.interval) return a.interval-b.interval;
       if(a.target!==b.target) return a.target<b.target?-1:1;
       return a.courseId<b.courseId?-1:1;
     });
     var loads = {};
-    var capOf = function(date){ return isWeekend(date)?WEEKEND_CAP:WEEKDAY_CAP; };
+    var dailyCap = (state.settings&&state.settings.dailyCap)||DEFAULT_SETTINGS.dailyCap;
+    var capOf = function(date){ return dailyCap; };
     var loadOf = function(date){ return loads[date]||0; };
     sorted.forEach(function(e){
       var candidates=[];
@@ -417,6 +485,7 @@ tbody tr:hover{background:#F7F8FE;}
   }
 
   function getSchedule(){ return scheduleEvents(buildEvents()); }
+
 
   // ---------------- actions: subjects ----------------
   async function createSubject(name){
@@ -474,7 +543,7 @@ tbody tr:hover{background:#F7F8FE;}
     name=(name||'').trim(); if(!name) return;
     state.jlists.push({id:uid('jl'), name:name, days:[]});
     state.addingList=false;
-    await persistJLists(); render();
+    await persistJLists(); await syncSettingsWithJLists(); render();
   }
   async function renameList(id,name){
     name=(name||'').trim();
@@ -485,6 +554,7 @@ tbody tr:hover{background:#F7F8FE;}
   async function deleteList(id){
     state.jlists=state.jlists.filter(function(l){return l.id!==id;});
     await persistJLists();
+    if(state.settings){ delete state.settings.jPriority[id]; delete state.settings.jTolerance[id]; await persistSettings(); }
     var touched=[];
     state.subjects.forEach(function(s){
       var d=state.data[s.id]; if(!d) return;
@@ -497,11 +567,11 @@ tbody tr:hover{background:#F7F8FE;}
     var n=parseInt(value,10);
     if(isNaN(n)||n<0) return;
     var l=state.jlists.find(function(l){return l.id===listId;});
-    if(l && l.days.indexOf(n)===-1){ l.days.push(n); l.days.sort(function(a,b){return a-b;}); await persistJLists(); render(); }
+    if(l && l.days.indexOf(n)===-1){ l.days.push(n); l.days.sort(function(a,b){return a-b;}); await persistJLists(); await syncSettingsWithJLists(); render(); }
   }
   async function removeIntervalFromList(listId,n){
     var l=state.jlists.find(function(l){return l.id===listId;});
-    if(l){ l.days=l.days.filter(function(x){return x!==n;}); await persistJLists(); render(); }
+    if(l){ l.days=l.days.filter(function(x){return x!==n;}); await persistJLists(); await syncSettingsWithJLists(); render(); }
   }
 
   // ---------------- render helpers ----------------
@@ -821,7 +891,64 @@ tbody tr:hover{background:#F7F8FE;}
       '<span class="swatch-value mono">'+lc['2'].toUpperCase()+'</span></div>';
     html+='</div>';
 
-    html+='<button class="btn btn-mini" data-action="reset-settings">Réinitialiser les couleurs par défaut</button>';
+    var dw=state.settings.diffWeights;
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Hiérarchie de la difficulté</h3>';
+    html+='<p class="hint">Définis le poids de chaque niveau dans le calcul de charge quotidienne. Exemple : difficile = 3 et facile = 1 signifie qu\'1 cours difficile équivaut à 3 cours faciles.</p>';
+    [['green','Facile'],['orange','Moyen'],['red','Difficile']].forEach(function(row){
+      html+='<div class="color-row"><label>'+row[1]+'</label>'+
+        '<input type="number" min="0.1" step="0.5" style="width:70px;" value="'+dw[row[0]]+'" data-action="set-diff-weight" data-key="'+row[0]+'">'+
+        '<span class="swatch-value mono">poids '+dw[row[0]]+'</span></div>';
+    });
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Plafond quotidien</h3>';
+    html+='<p class="hint">Nombre maximal de cours (pondérés selon la difficulté ci-dessus) prévus le même jour. Avec la hiérarchie 1/2/3, un plafond de 12 correspond par exemple à 12 cours faciles, 6 moyens, 4 difficiles, ou un mélange.</p>';
+    html+='<div class="color-row"><label>Cours par jour (max.)</label>'+
+      '<input type="number" min="1" step="1" style="width:70px;" value="'+state.settings.dailyCap+'" data-action="set-daily-cap">'+
+      '<span class="swatch-value mono">'+state.settings.dailyCap+'</span></div>';
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Ordre de priorité des J</h3>';
+    html+='<p class="hint">Un classement séparé par liste de J. En cas de conflit de charge un jour donné, dans une liste donnée, les J les plus haut sont placés en priorité à leur date théorique ; les autres sont décalés en premier. Utilise les flèches pour réordonner. La liste se met à jour automatiquement si tu ajoutes ou retires un J.</p>';
+    if(!state.jlists.length){ html+='<div class="empty-table-note">Aucune liste de J pour le moment.</div>'; }
+    state.jlists.forEach(function(l){
+      var order=(state.settings.jPriority[l.id]||[]).filter(function(J){ return l.days.indexOf(J)!==-1; });
+      l.days.forEach(function(J){ if(order.indexOf(J)===-1) order.push(J); });
+      html+='<div class="settings-sublist"><div class="settings-sublist-title">'+escapeHTML(l.name)+'</div>';
+      if(!order.length){ html+='<div class="empty-table-note">Cette liste n\'a aucun J pour le moment.</div>'; }
+      order.forEach(function(J,i){
+        html+='<div class="color-row"><span class="swatch-value mono" style="min-width:22px;text-align:left;">#'+(i+1)+'</span>'+
+          '<label style="flex:1;">J'+J+'</label>'+
+          '<button class="btn btn-mini" data-action="jpriority-up" data-list="'+l.id+'" data-value="'+J+'" '+(i===0?'disabled':'')+' title="Monter">▲</button>'+
+          '<button class="btn btn-mini" data-action="jpriority-down" data-list="'+l.id+'" data-value="'+J+'" '+(i===order.length-1?'disabled':'')+' title="Descendre">▼</button>'+
+          '</div>';
+      });
+      html+='</div>';
+    });
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Tolérance (± jours) par intervalle J</h3>';
+    html+='<p class="hint">Marge autour de la date théorique de chaque J, propre à chaque liste, dans laquelle un cours peut être décalé pour respecter le plafond quotidien. Exemple : J10 avec une tolérance de 2 peut être placé entre J8 et J12.</p>';
+    if(!state.jlists.length){ html+='<div class="empty-table-note">Aucune liste de J pour le moment.</div>'; }
+    state.jlists.forEach(function(l){
+      html+='<div class="settings-sublist"><div class="settings-sublist-title">'+escapeHTML(l.name)+'</div>';
+      if(!l.days.length){ html+='<div class="empty-table-note">Cette liste n\'a aucun J pour le moment.</div>'; }
+      l.days.slice().sort(function(a,b){return a-b;}).forEach(function(J){
+        var tolMap=state.settings.jTolerance[l.id]||{};
+        var t=tolMap[J]!==undefined?tolMap[J]:defaultToleranceFor(J);
+        html+='<div class="color-row"><label>J'+J+'</label>'+
+          '<input type="number" min="0" step="1" style="width:70px;" value="'+t+'" data-action="set-j-tolerance" data-list="'+l.id+'" data-value="'+J+'">'+
+          '<span class="swatch-value mono">± '+t+' j</span></div>';
+      });
+      html+='</div>';
+    });
+    html+='</div>';
+
+    html+='<button class="btn btn-mini" data-action="reset-settings">Réinitialiser tous les réglages</button>';
     html+='</div>';
     return html;
   }
@@ -967,7 +1094,41 @@ tbody tr:hover{background:#F7F8FE;}
     else if(action==='dab-prev'){ state.dailyAgendaManualNav=true; state.dailyAgendaDay=addDays(el.dataset.day,-1); render(); }
     else if(action==='dab-next'){ state.dailyAgendaManualNav=true; state.dailyAgendaDay=addDays(el.dataset.day,1); render(); }
     else if(action==='dab-today'){ state.dailyAgendaManualNav=false; state.dailyAgendaDay=null; render(); }
-    else if(action==='reset-settings'){ state.settings={diffColors:Object.assign({},DEFAULT_SETTINGS.diffColors), lateColors:Object.assign({},DEFAULT_SETTINGS.lateColors)}; persistSettings().then(render); }
+    else if(action==='reset-settings'){
+      state.settings={
+        diffColors:Object.assign({},DEFAULT_SETTINGS.diffColors),
+        lateColors:Object.assign({},DEFAULT_SETTINGS.lateColors),
+        diffWeights:Object.assign({},DEFAULT_SETTINGS.diffWeights),
+        dailyCap:DEFAULT_SETTINGS.dailyCap,
+        jPriority:{},
+        jTolerance:{}
+      };
+      persistSettings().then(syncSettingsWithJLists).then(render);
+    }
+    else if(action==='jpriority-up'){
+      var lidU=el.dataset.list, JvU=Number(el.dataset.value);
+      var l1=state.jlists.find(function(l){return l.id===lidU;});
+      if(l1){
+        var ordU=(state.settings.jPriority[lidU]||[]).filter(function(J){return l1.days.indexOf(J)!==-1;});
+        l1.days.forEach(function(J){ if(ordU.indexOf(J)===-1) ordU.push(J); });
+        var idxU=ordU.indexOf(JvU);
+        if(idxU>0){ var tmpU=ordU[idxU-1]; ordU[idxU-1]=ordU[idxU]; ordU[idxU]=tmpU; }
+        state.settings.jPriority[lidU]=ordU;
+        persistSettings().then(render);
+      }
+    }
+    else if(action==='jpriority-down'){
+      var lidD=el.dataset.list, JvD=Number(el.dataset.value);
+      var l2=state.jlists.find(function(l){return l.id===lidD;});
+      if(l2){
+        var ordD=(state.settings.jPriority[lidD]||[]).filter(function(J){return l2.days.indexOf(J)!==-1;});
+        l2.days.forEach(function(J){ if(ordD.indexOf(J)===-1) ordD.push(J); });
+        var idxD=ordD.indexOf(JvD);
+        if(idxD!==-1 && idxD<ordD.length-1){ var tmpD=ordD[idxD+1]; ordD[idxD+1]=ordD[idxD]; ordD[idxD]=tmpD; }
+        state.settings.jPriority[lidD]=ordD;
+        persistSettings().then(render);
+      }
+    }
   });
 
   app.addEventListener('change', function(e){
@@ -986,6 +1147,25 @@ tbody tr:hover{background:#F7F8FE;}
     else if(action==='course-list'){ updateCourse(el.dataset.subject, el.dataset.id, {listId:el.value}).then(render); }
     else if(action==='set-diff-color'){ state.settings.diffColors[el.dataset.key]=el.value; persistSettings().then(render); }
     else if(action==='set-late-color'){ state.settings.lateColors[el.dataset.key]=el.value; persistSettings().then(render); }
+    else if(action==='set-diff-weight'){
+      var wv=parseFloat(el.value);
+      if(!isNaN(wv) && wv>0){ state.settings.diffWeights[el.dataset.key]=wv; persistSettings().then(render); }
+      else render();
+    }
+    else if(action==='set-daily-cap'){
+      var cv=parseFloat(el.value);
+      if(!isNaN(cv) && cv>0){ state.settings.dailyCap=cv; persistSettings().then(render); }
+      else render();
+    }
+    else if(action==='set-j-tolerance'){
+      var tv=parseInt(el.value,10);
+      var lidT=el.dataset.list;
+      if(!isNaN(tv) && tv>=0 && lidT){
+        if(!state.settings.jTolerance[lidT]) state.settings.jTolerance[lidT]={};
+        state.settings.jTolerance[lidT][el.dataset.value]=tv;
+        persistSettings().then(render);
+      } else render();
+    }
   });
 
   app.addEventListener('input', function(e){
@@ -1001,6 +1181,7 @@ tbody tr:hover{background:#F7F8FE;}
     app.innerHTML='<div class="app-title"><h1>Classeur de révisions</h1></div><div class="main-card"><div class="empty-state"><p>Chargement…</p></div></div>';
     await loadJLists();
     await loadSettings();
+    await syncSettingsWithJLists();
     await loadSubjects();
     for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
     state.selectedDay=todayISO();
