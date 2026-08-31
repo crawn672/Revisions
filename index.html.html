@@ -248,14 +248,43 @@ tbody tr:hover{background:#F7F8FE;}
 .settings-sublist{margin-bottom:14px; padding:10px 10px 4px; background:#fff; border:1px solid var(--line); border-radius:8px;}
 .settings-sublist-title{font-family:'Fraunces', serif; font-weight:600; font-size:13px; margin-bottom:8px; color:var(--ink-soft);}
 .settings-sublist .color-row{background:var(--paper);}
+
+/* ---------- auth / compte ---------- */
+.top-bar{display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 4px 12px; flex-wrap:wrap;}
+.top-bar-user{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft);}
+.badge{font-family:'IBM Plex Mono', monospace; font-size:10px; text-transform:uppercase; letter-spacing:.04em; padding:3px 7px; border-radius:20px; font-weight:600;}
+.badge-admin{background:var(--amber-bg); color:var(--amber);}
+.badge-member{background:var(--teal-bg); color:var(--teal-dark);}
+.badge-pending{background:var(--red-bg); color:var(--red);}
+.badge-approved{background:var(--green-bg); color:var(--green);}
+
+.auth-card{max-width:400px; margin:40px auto; text-align:left;}
+.auth-form{display:flex; flex-direction:column; gap:12px; margin:14px 0 6px;}
+.auth-form label{font-size:12.5px; color:var(--ink-soft); font-weight:500; display:flex; flex-direction:column; gap:5px;}
+.auth-form input{padding:9px 10px; font-size:14px;}
+.auth-form .btn-primary{margin-top:4px; padding:9px 12px; font-size:13px;}
+.auth-error{background:var(--red-bg); color:var(--red); border-radius:7px; padding:8px 10px; font-size:12.5px; margin:6px 0 0;}
+.auth-message{background:var(--green-bg); color:var(--green); border-radius:7px; padding:8px 10px; font-size:12.5px; margin:6px 0 0;}
+.auth-switch{font-size:12.5px; color:var(--ink-soft); margin-top:14px;}
+.auth-switch button{background:none; border:none; color:var(--teal-dark); font-weight:600; text-decoration:underline; padding:0; cursor:pointer;}
+
+.admin-table-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;}
+.admin-row-actions{display:flex; gap:6px; flex-wrap:wrap;}
 </style>
 </head>
 <body>
 <div id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
   "use strict";
+
+  // ==== Supabase : à remplir avec les infos de TON projet ====
+  // Supabase → Project Settings → API → "Project URL" et "anon public" key.
+  var SUPABASE_URL = 'https://VOTRE-PROJET.supabase.co';
+  var SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON_PUBLIQUE';
+  var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   var state = {
     subjects: [],
@@ -274,7 +303,17 @@ tbody tr:hover{background:#F7F8FE;}
     settings: null,          // {diffColors:{green,orange,red}, lateColors:{'1','2'}}
     dailyAgendaDay: null,     // ISO date shown in the bottom bar when manually navigated
     dailyAgendaManualNav: false,
-    dailyAgendaCollapsed: false
+    dailyAgendaCollapsed: false,
+
+    // ---- auth ----
+    session: null,            // session Supabase courante (ou null)
+    profile: null,            // { id, email, role:'admin'|'member', approved:boolean }
+    authMode: 'login',        // 'login' | 'signup'
+    authEmail: '',
+    authError: null,
+    authMessage: null,
+    authBusy: false,
+    allProfiles: null         // chargé par l'admin uniquement
   };
 
   var DEFAULT_SETTINGS = {
@@ -303,22 +342,186 @@ tbody tr:hover{background:#F7F8FE;}
   // même si la page reste ouverte plusieurs jours.
   function todayISO(){ return toISODate(new Date()); }
 
-  // Données 100% locales au navigateur : rien n'est envoyé à un serveur.
-  // Chaque navigateur / profil possède donc son propre agenda et ses propres cours.
-  var STORAGE_PREFIX = 'classeur-revisions-v2:';
-  function storageKey(key){ return STORAGE_PREFIX + key; }
-
+  // Les données sont stockées dans Supabase (table user_data), rattachées au
+  // compte connecté : elles sont donc accessibles depuis n'importe quel appareil
+  // une fois le compte approuvé par l'administrateur.
   async function safeGet(key){
-    try{ return window.localStorage.getItem(storageKey(key)); }
-    catch(e){ return null; }
+    if(!state.session) return null;
+    try{
+      var res = await supabase.from('user_data').select('value')
+        .eq('user_id', state.session.user.id).eq('key', key).maybeSingle();
+      if(res.error){ console.error(res.error); return null; }
+      return res.data ? JSON.stringify(res.data.value) : null;
+    } catch(e){ console.error(e); return null; }
   }
   async function safeSet(key,value){
-    try{ window.localStorage.setItem(storageKey(key), value); }
-    catch(e){}
+    if(!state.session) return;
+    try{
+      var parsed = value===undefined||value===null ? null : JSON.parse(value);
+      var res = await supabase.from('user_data').upsert({
+        user_id: state.session.user.id, key: key, value: parsed, updated_at: new Date().toISOString()
+      }, {onConflict:'user_id,key'});
+      if(res.error) console.error(res.error);
+    } catch(e){ console.error(e); }
   }
   async function safeDelete(key){
-    try{ window.localStorage.removeItem(storageKey(key)); }
-    catch(e){}
+    if(!state.session) return;
+    try{
+      var res = await supabase.from('user_data').delete()
+        .eq('user_id', state.session.user.id).eq('key', key);
+      if(res.error) console.error(res.error);
+    } catch(e){ console.error(e); }
+  }
+
+  // ---------------- auth ----------------
+  function authErrorFR(err){
+    if(!err) return null;
+    var m=(err.message||'').toLowerCase();
+    if(m.indexOf('invalid login credentials')!==-1) return 'Email ou mot de passe incorrect.';
+    if(m.indexOf('user already registered')!==-1 || m.indexOf('already registered')!==-1) return 'Un compte existe déjà avec cet email.';
+    if(m.indexOf('password should be at least')!==-1) return 'Le mot de passe doit contenir au moins 6 caractères.';
+    if(m.indexOf('unable to validate email')!==-1 || m.indexOf('invalid email')!==-1) return 'Adresse email invalide.';
+    return err.message || 'Une erreur est survenue.';
+  }
+
+  async function loadProfile(){
+    if(!state.session){ state.profile=null; return; }
+    var res = await supabase.from('profiles').select('*').eq('id', state.session.user.id).maybeSingle();
+    state.profile = res.data || null;
+  }
+
+  async function loadAllProfiles(){
+    var res = await supabase.from('profiles').select('*').order('created_at',{ascending:true});
+    state.allProfiles = res.data || [];
+  }
+
+  async function signIn(email,password){
+    state.authBusy=true; state.authError=null; state.authMessage=null; renderAuth();
+    var res = await supabase.auth.signInWithPassword({email:email,password:password});
+    state.authBusy=false;
+    if(res.error){ state.authError=authErrorFR(res.error); renderAuth(); }
+    // sinon, onAuthStateChange prend le relai
+  }
+
+  async function signUp(email,password){
+    state.authBusy=true; state.authError=null; state.authMessage=null; renderAuth();
+    var res = await supabase.auth.signUp({email:email,password:password});
+    state.authBusy=false;
+    if(res.error){ state.authError=authErrorFR(res.error); renderAuth(); return; }
+    state.authMode='login';
+    state.authMessage='Compte créé. Si une confirmation par email est activée sur le projet, vérifie ta boîte mail. Ton compte doit ensuite être approuvé par l’administrateur avant de pouvoir accéder à tes données.';
+    renderAuth();
+  }
+
+  async function doSignOut(){ await supabase.auth.signOut(); }
+
+  async function approveUser(id){ await supabase.from('profiles').update({approved:true}).eq('id',id); await loadAllProfiles(); render(); }
+  async function revokeUser(id){ await supabase.from('profiles').update({approved:false}).eq('id',id); await loadAllProfiles(); render(); }
+  async function setUserRole(id, role){ await supabase.from('profiles').update({role:role}).eq('id',id); await loadAllProfiles(); render(); }
+
+  // Écran de connexion / inscription (aucun compte connecté)
+  function renderAuth(){
+    var mode = state.authMode||'login';
+    var html='<div class="app-title"><h1>Classeur de révisions</h1><span class="mono">répétition espacée</span></div>';
+    html+='<div class="main-card auth-card">';
+    html+='<h2 class="serif">'+(mode==='login'?'Connexion':'Créer un compte')+'</h2>';
+    if(state.authError) html+='<p class="auth-error">'+escapeHTML(state.authError)+'</p>';
+    if(state.authMessage) html+='<p class="auth-message">'+escapeHTML(state.authMessage)+'</p>';
+    html+='<div class="auth-form">';
+    html+='<label>Email<input type="email" id="auth-email" autocomplete="email" value="'+escapeHTML(state.authEmail||'')+'"></label>';
+    html+='<label>Mot de passe<input type="password" id="auth-password" autocomplete="'+(mode==='login'?'current-password':'new-password')+'"></label>';
+    html+='<button class="btn btn-primary" data-action="auth-submit" '+(state.authBusy?'disabled':'')+'>'+(mode==='login'?'Se connecter':'Créer le compte')+'</button>';
+    html+='</div>';
+    html+='<p class="auth-switch">'+(mode==='login'?'Pas encore de compte ? ':'Déjà un compte ? ')+
+      '<button data-action="auth-switch-mode">'+(mode==='login'?'Créer un compte':'Se connecter')+'</button></p>';
+    html+='</div>';
+    app.innerHTML=html;
+    app.style.paddingBottom='24px';
+    var emailInput=document.getElementById('auth-email'), pwInput=document.getElementById('auth-password');
+    if(emailInput){
+      if(!state.authEmail) emailInput.focus();
+      var submit=function(e){ if(e.key==='Enter'){ state.authEmail=emailInput.value; runAuthSubmit(); } };
+      emailInput.addEventListener('keydown', submit);
+      if(pwInput){ pwInput.addEventListener('keydown', submit); if(state.authEmail) pwInput.focus(); }
+    }
+  }
+
+  function runAuthSubmit(){
+    var emailInput=document.getElementById('auth-email'), pwInput=document.getElementById('auth-password');
+    var email=(emailInput?emailInput.value:'').trim(), password=pwInput?pwInput.value:'';
+    if(!email || !password){ state.authError='Merci de renseigner un email et un mot de passe.'; state.authEmail=email; renderAuth(); return; }
+    state.authEmail=email;
+    if((state.authMode||'login')==='login') signIn(email,password);
+    else signUp(email,password);
+  }
+
+  // Écran affiché à un utilisateur connecté mais pas encore approuvé
+  function renderPending(){
+    var html='<div class="app-title"><h1>Classeur de révisions</h1></div>';
+    html+='<div class="main-card auth-card">';
+    html+='<h2 class="serif">Compte en attente d’approbation</h2>';
+    html+='<p>Le compte <strong>'+escapeHTML(state.session.user.email)+'</strong> a bien été créé, mais doit être approuvé par l’administrateur avant que tu puisses accéder à tes données depuis cet appareil.</p>';
+    html+='<button class="btn" data-action="sign-out">Se déconnecter</button>';
+    html+='</div>';
+    app.innerHTML=html;
+    app.style.paddingBottom='24px';
+  }
+
+  function renderAdmin(){
+    var html='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">Comptes</h2></div>';
+    html+='<div class="view-note">Approuve les nouveaux comptes pour qu’ils puissent accéder à leurs données. Seul un administrateur peut voir cette page.</div>';
+    var list = state.allProfiles||[];
+    if(!list.length){ html+='<div class="empty-table-note">Chargement…</div>'; }
+    else{
+      html+='<div class="admin-table-wrap"><table><thead><tr><th>Email</th><th>Statut</th><th>Rôle</th><th>Actions</th></tr></thead><tbody>';
+      list.forEach(function(p){
+        html+='<tr><td>'+escapeHTML(p.email||p.id)+'</td>';
+        html+='<td><span class="badge '+(p.approved?'badge-approved':'badge-pending')+'">'+(p.approved?'Approuvé':'En attente')+'</span></td>';
+        html+='<td><span class="badge '+(p.role==='admin'?'badge-admin':'badge-member')+'">'+(p.role==='admin'?'Admin':'Membre')+'</span></td>';
+        html+='<td><div class="admin-row-actions">';
+        if(!p.approved) html+='<button class="btn btn-mini btn-primary" data-action="approve-user" data-id="'+p.id+'">Approuver</button>';
+        else if(p.id!==state.session.user.id) html+='<button class="btn btn-mini btn-danger" data-action="revoke-user" data-id="'+p.id+'">Révoquer</button>';
+        if(p.role==='admin' && p.id!==state.session.user.id) html+='<button class="btn btn-mini" data-action="demote-user" data-id="'+p.id+'">Retirer admin</button>';
+        else if(p.role!=='admin') html+='<button class="btn btn-mini" data-action="promote-user" data-id="'+p.id+'">Nommer admin</button>';
+        html+='</div></td></tr>';
+      });
+      html+='</tbody></table></div>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  function renderTopBar(){
+    if(!state.session || !state.profile) return '';
+    var html='<div class="top-bar"><div class="top-bar-user">'+
+      '<span>'+escapeHTML(state.session.user.email)+'</span>'+
+      '<span class="badge '+(state.profile.role==='admin'?'badge-admin':'badge-member')+'">'+(state.profile.role==='admin'?'Admin':'Membre')+'</span>'+
+      '</div><button class="btn btn-mini" data-action="sign-out">Se déconnecter</button></div>';
+    return html;
+  }
+
+  // Point d'entrée : appelé à chaque changement d'état d'authentification.
+  async function handleAuthChange(){
+    if(!state.session){
+      state.profile=null; state.allProfiles=null;
+      renderAuth();
+      return;
+    }
+    await loadProfile();
+    if(!state.profile || !state.profile.approved){
+      renderPending();
+      return;
+    }
+    app.innerHTML='<div class="main-card"><div class="empty-state"><p>Chargement…</p></div></div>';
+    await loadJLists();
+    await loadSettings();
+    await syncSettingsWithJLists();
+    await loadSubjects();
+    for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
+    state.selectedDay=todayISO();
+    state.currentView='home';
+    render();
   }
 
   async function loadSubjects(){ var raw=await safeGet('subjects'); state.subjects = raw?JSON.parse(raw):[]; }
@@ -627,6 +830,9 @@ tbody tr:hover{background:#F7F8FE;}
     ].forEach(function(item){
       html+='<option value="'+item[0]+'"'+(state.currentView===item[0]?' selected':'')+'>'+item[1]+'</option>';
     });
+    if(state.profile && state.profile.role==='admin'){
+      html+='<option value="admin"'+(state.currentView==='admin'?' selected':'')+'>🔐 Comptes</option>';
+    }
     if(state.subjects.length){
       html+='<optgroup label="Matières">';
       state.subjects.forEach(function(s){
@@ -653,7 +859,7 @@ tbody tr:hover{background:#F7F8FE;}
     html+='<button class="btn btn-primary" data-action="select-view" data-view="agenda">📅 Ouvrir l’agenda</button>';
     html+='<button class="btn" data-action="select-view" data-view="subjects">📚 Voir les matières</button>';
     html+='</div>';
-    html+='<p class="local-note">💾 Tes données sont enregistrées automatiquement dans le stockage local de ce navigateur. Elles restent privées à cet appareil / profil de navigateur.</p>';
+    html+='<p class="local-note">☁️ Tes données sont liées à ton compte et enregistrées dans le cloud : tu les retrouves automatiquement sur n’importe quel appareil où tu te connectes.</p>';
     html+='</div>';
     return html;
   }
@@ -1007,13 +1213,15 @@ tbody tr:hover{background:#F7F8FE;}
     if(state.currentView==='lists') return renderLists();
     if(state.currentView==='subjects') return renderSubjects();
     if(state.currentView==='settings') return renderSettings();
+    if(state.currentView==='admin') return renderAdmin();
     if(state.currentView && state.data[state.currentView]!==undefined) return renderSubject(state.currentView);
     return renderHome();
   }
 
   function render(){
     var html='<div class="app-title"><h1>Classeur de révisions</h1><span class="mono">répétition espacée</span></div>';
-    html+='<div class="app-sub">Révisions espacées · sauvegarde automatique locale</div>';
+    html+='<div class="app-sub">Révisions espacées · synchronisées sur ton compte</div>';
+    html+=renderTopBar();
     html+=renderTabs();
     html+=renderMain();
     html+=renderDailyAgendaBar();
@@ -1053,11 +1261,19 @@ tbody tr:hover{background:#F7F8FE;}
     if(action==='select-view'){
       state.currentView=el.dataset.view;
       state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
-      if(el.dataset.view && state.data[el.dataset.view]===undefined && el.dataset.view!=='agenda' && el.dataset.view!=='lists' && el.dataset.view!=='home' && el.dataset.view!=='subjects' && el.dataset.view!=='settings'){
+      if(el.dataset.view==='admin'){ loadAllProfiles().then(render); }
+      else if(el.dataset.view && state.data[el.dataset.view]===undefined && el.dataset.view!=='agenda' && el.dataset.view!=='lists' && el.dataset.view!=='home' && el.dataset.view!=='subjects' && el.dataset.view!=='settings'){
         loadSubjectData(el.dataset.view).then(render);
       } else { render(); }
     }
     else if(action==='navigate-menu'){ /* handled by change event */ }
+    else if(action==='auth-submit'){ runAuthSubmit(); }
+    else if(action==='auth-switch-mode'){ state.authMode = (state.authMode==='login'?'signup':'login'); state.authError=null; state.authMessage=null; renderAuth(); }
+    else if(action==='sign-out'){ doSignOut(); }
+    else if(action==='approve-user'){ approveUser(el.dataset.id); }
+    else if(action==='revoke-user'){ revokeUser(el.dataset.id); }
+    else if(action==='promote-user'){ setUserRole(el.dataset.id,'admin'); }
+    else if(action==='demote-user'){ setUserRole(el.dataset.id,'member'); }
     else if(action==='show-add-subject'){ state.addingSubject=true; render(); }
     else if(action==='cancel-add-subject'){ state.addingSubject=false; render(); }
     else if(action==='confirm-add-subject'){ createSubject(document.getElementById('new-subject-input').value); }
@@ -1138,7 +1354,8 @@ tbody tr:hover{background:#F7F8FE;}
     if(action==='navigate-menu'){
       state.currentView=el.value;
       state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
-      if(state.currentView!=='agenda' && state.currentView!=='lists' && state.currentView!=='home' && state.currentView!=='subjects' && state.currentView!=='settings' && state.data[state.currentView]===undefined){
+      if(state.currentView==='admin'){ loadAllProfiles().then(render); }
+      else if(state.currentView!=='agenda' && state.currentView!=='lists' && state.currentView!=='home' && state.currentView!=='subjects' && state.currentView!=='settings' && state.data[state.currentView]===undefined){
         loadSubjectData(state.currentView).then(render);
       } else render();
     }
@@ -1179,13 +1396,13 @@ tbody tr:hover{background:#F7F8FE;}
   // ---------------- init ----------------
   async function init(){
     app.innerHTML='<div class="app-title"><h1>Classeur de révisions</h1></div><div class="main-card"><div class="empty-state"><p>Chargement…</p></div></div>';
-    await loadJLists();
-    await loadSettings();
-    await syncSettingsWithJLists();
-    await loadSubjects();
-    for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
-    state.selectedDay=todayISO();
-    render();
+    supabase.auth.onAuthStateChange(function(event, session){
+      state.session = session;
+      handleAuthChange();
+    });
+    var initial = await supabase.auth.getSession();
+    state.session = initial.data ? initial.data.session : null;
+    await handleAuthChange();
   }
   init();
 })();
