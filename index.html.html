@@ -167,7 +167,8 @@ tbody tr:hover{background:#F7F8FE;}
 
 .agenda-list{display:flex; flex-direction:column; gap:6px;}
 .agenda-empty{color:var(--ink-faint); font-size:12.5px; padding:6px 2px;}
-.agenda-item{display:flex; align-items:center; gap:9px; background:var(--paper); border-radius:7px; padding:8px 10px;}
+.agenda-item{display:flex; align-items:center; gap:9px; background:var(--paper); border-radius:7px; padding:8px 10px; cursor:pointer; border-left:4px solid transparent;}
+.agenda-item input[type="checkbox"]{width:16px; height:16px; flex:0 0 auto; cursor:pointer; accent-color:var(--teal);}
 .agenda-item .adiff{width:9px; height:9px; border-radius:50%; flex:0 0 auto;}
 .agenda-item .ainfo{flex:1; min-width:0;}
 .agenda-item .aname{font-weight:500; display:block;}
@@ -214,6 +215,36 @@ tbody tr:hover{background:#F7F8FE;}
   .col-date input{width:102px;}
   .main-card{padding:14px 10px 18px;}
 }
+
+/* ---------- daily agenda bar (fixed bottom) ---------- */
+.daily-agenda-bar{position:fixed; left:0; right:0; bottom:0; z-index:60; background:var(--card);
+  border-top:1px solid var(--line); box-shadow:0 -6px 20px rgba(52,64,150,.14);
+  max-height:52vh; display:flex; flex-direction:column; margin:0 auto; max-width:1100px;
+  border-radius:12px 12px 0 0; left:0; right:0;}
+.dab-handle{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 16px; cursor:pointer; user-select:none;}
+.dab-title{font-family:'Fraunces', serif; font-weight:600; font-size:13.5px;}
+.dab-count{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); margin-left:auto; margin-right:8px;}
+.dab-toggle{font-size:11px; color:var(--ink-faint);}
+.dab-nav{display:flex; gap:6px; padding:0 16px 8px; flex-wrap:wrap;}
+.dab-list{overflow-y:auto; padding:0 16px 16px; display:flex; flex-direction:column; gap:6px;}
+.dab-item{display:flex; align-items:center; gap:9px; background:var(--paper); border-radius:7px; padding:8px 10px; cursor:pointer; border-left:4px solid transparent;}
+.dab-item input[type="checkbox"]{width:17px; height:17px; flex:0 0 auto; cursor:pointer; accent-color:var(--teal);}
+.dab-item .adiff{width:9px; height:9px; border-radius:50%; flex:0 0 auto;}
+.dab-info{flex:1; min-width:0; display:flex; flex-direction:column;}
+.dab-name{font-weight:500;}
+.dab-sub{font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-faint);}
+.dab-late{font-family:'IBM Plex Mono', monospace; font-size:11px; font-weight:600; white-space:nowrap;}
+.dab-item.done{opacity:.5;}
+.dab-item.done .dab-name{text-decoration:line-through;}
+
+/* ---------- settings view ---------- */
+.settings-section{margin-bottom:24px;}
+.settings-section h3{font-size:14px; margin:0 0 3px;}
+.settings-section p.hint{font-size:11.5px; color:var(--ink-faint); margin:0 0 12px;}
+.color-row{display:flex; align-items:center; gap:12px; margin-bottom:9px; background:var(--paper); border-radius:8px; padding:8px 12px;}
+.color-row label{flex:1; font-size:13px; font-weight:500;}
+.color-row input[type="color"]{width:42px; height:30px; padding:2px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer;}
+.color-row .swatch-value{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); min-width:60px; text-align:right;}
 </style>
 </head>
 <body>
@@ -236,7 +267,16 @@ tbody tr:hover{background:#F7F8FE;}
     confirmDeleteCourseId: null,
     confirmDeleteListId: null,
     calendarMonth: startOfMonth(new Date()),
-    selectedDay: null
+    selectedDay: null,
+    settings: null,          // {diffColors:{green,orange,red}, lateColors:{'1','2'}}
+    dailyAgendaDay: null,     // ISO date shown in the bottom bar when manually navigated
+    dailyAgendaManualNav: false,
+    dailyAgendaCollapsed: false
+  };
+
+  var DEFAULT_SETTINGS = {
+    diffColors:{ green:'#4C9A82', orange:'#8A63D2', red:'#C94C7C' },
+    lateColors:{ '1':'#E0A526', '2':'#D64545' }
   };
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -292,6 +332,23 @@ tbody tr:hover{background:#F7F8FE;}
     await persistJLists();
   }
   async function persistJLists(){ await safeSet('jlists', JSON.stringify(state.jlists)); }
+
+  async function loadSettings(){
+    var raw = await safeGet('settings');
+    var s = {
+      diffColors: Object.assign({}, DEFAULT_SETTINGS.diffColors),
+      lateColors: Object.assign({}, DEFAULT_SETTINGS.lateColors)
+    };
+    if(raw){
+      try{
+        var parsed = JSON.parse(raw);
+        if(parsed.diffColors) Object.assign(s.diffColors, parsed.diffColors);
+        if(parsed.lateColors) Object.assign(s.lateColors, parsed.lateColors);
+      } catch(e){}
+    }
+    state.settings = s;
+  }
+  async function persistSettings(){ await safeSet('settings', JSON.stringify(state.settings)); }
 
   // ---------------- scheduling engine ----------------
   function toleranceFor(J){
@@ -457,7 +514,35 @@ tbody tr:hover{background:#F7F8FE;}
     });
     return c;
   }
-  function diffColor(diff){ return diff==='green'?'var(--green)':diff==='orange'?'var(--orange)':diff==='red'?'var(--red)':'var(--ink-faint)'; }
+  function diffColor(diff){
+    var c=state.settings&&state.settings.diffColors;
+    if(diff==='green') return (c&&c.green)||'var(--green)';
+    if(diff==='orange') return (c&&c.orange)||'var(--orange)';
+    if(diff==='red') return (c&&c.red)||'var(--red)';
+    return 'var(--ink-faint)';
+  }
+  // Nombre de jours de retard pour un événement non fait (0 si à l'heure / dans le futur / fait)
+  function lateDaysFor(e){
+    if(e.done) return 0;
+    var d=daysBetween(todayISO(), e.scheduled);
+    return d>0 ? d : 0;
+  }
+  function lateColor(days){
+    if(!days || days<=0) return null;
+    var c=state.settings&&state.settings.lateColors;
+    if(days===1) return (c&&c['1'])||DEFAULT_SETTINGS.lateColors['1'];
+    return (c&&c['2'])||DEFAULT_SETTINGS.lateColors['2'];
+  }
+  // Construit les événements pour l'agenda journalier : un cours non coché le jour prévu
+  // n'est jamais perdu, il est automatiquement reporté au jour courant tant qu'il n'est pas fait.
+  function buildDailyAgendaEvents(){
+    var today=todayISO();
+    return getSchedule().map(function(e){
+      var effectiveDate = e.done ? e.scheduled : (e.scheduled<=today ? today : e.scheduled);
+      var late = lateDaysFor(e);
+      return Object.assign({}, e, {effectiveDate:effectiveDate, late:late});
+    });
+  }
 
   function renderTabs(){
     var html='<div class="main-nav">';
@@ -467,7 +552,8 @@ tbody tr:hover{background:#F7F8FE;}
       ['home','Accueil'],
       ['lists','🗂 Listes de J'],
       ['agenda','📅 Agenda'],
-      ['subjects','📚 Matières']
+      ['subjects','📚 Matières'],
+      ['settings','⚙️ Réglages']
     ].forEach(function(item){
       html+='<option value="'+item[0]+'"'+(state.currentView===item[0]?' selected':'')+'>'+item[1]+'</option>';
     });
@@ -540,7 +626,7 @@ tbody tr:hover{background:#F7F8FE;}
     var html='<div class="main-card">';
     html+='<div class="view-header"><h2 class="serif">Agenda global</h2></div>';
     html+='<div class="view-note">Toutes matières confondues. Les dates peuvent être légèrement ajustées (± quelques jours selon le J) pour répartir la charge. Un * indique une date décalée par rapport au J théorique.</div>';
-    html+='<div class="legend"><span><i style="background:var(--green)"></i>Facile</span><span><i style="background:var(--orange)"></i>Moyen</span><span><i style="background:var(--red)"></i>Difficile</span></div>';
+    html+='<div class="legend"><span><i style="background:'+diffColor('green')+'"></i>Facile</span><span><i style="background:'+diffColor('orange')+'"></i>Moyen</span><span><i style="background:'+diffColor('red')+'"></i>Difficile</span></div>';
 
     html+='<div class="calendar-header"><div class="month-label">'+MONTHS[m]+' '+y+'</div>'+
       '<div class="calendar-nav"><button class="btn btn-mini" data-action="cal-prev">&larr;</button>'+
@@ -577,11 +663,15 @@ tbody tr:hover{background:#F7F8FE;}
     else{
       selEvs.forEach(function(e){
         var shifted = e.scheduled!==e.target;
-        html+='<div class="agenda-item'+(e.done?' done':'')+'" data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">'+
+        var late = lateDaysFor(e);
+        var lc = lateColor(late);
+        var style = lc ? ' style="border-left:4px solid '+lc+';"' : '';
+        html+='<label class="agenda-item'+(e.done?' done':'')+'"'+style+'>'+
+          '<input type="checkbox" '+(e.done?'checked':'')+' data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">'+
           '<span class="adiff" style="background:'+diffColor(e.difficulty)+'"></span>'+
           '<span class="ainfo"><span class="aname">'+escapeHTML(e.courseName)+'</span><span class="asub">'+escapeHTML(e.subjectName)+'</span></span>'+
-          '<span class="ainterval">J'+e.interval+(shifted?' *':'')+'</span>'+
-        '</div>';
+          (late>0&&!e.done?'<span class="ainterval" style="color:'+lc+';font-weight:600;">+'+late+'j</span>':'<span class="ainterval">J'+e.interval+(shifted?' *':'')+'</span>')+
+        '</label>';
       });
     }
     html+='</div></div>';
@@ -647,7 +737,7 @@ tbody tr:hover{background:#F7F8FE;}
     var confirmingSub=state.confirmDeleteSubject===s.id;
     html+='<div class="header-actions"><button class="btn btn-danger btn-mini'+(confirmingSub?' confirming':'')+'" data-action="'+(confirmingSub?'delete-subject':'confirm-delete-subject')+'" data-id="'+s.id+'">'+(confirmingSub?'Confirmer suppression':'Supprimer le dossier')+'</button></div></div>';
 
-    html+='<div class="legend"><span><i style="background:var(--green)"></i>Facile</span><span><i style="background:var(--orange)"></i>Moyen</span><span><i style="background:var(--red)"></i>Difficile</span></div>';
+    html+='<div class="legend"><span><i style="background:'+diffColor('green')+'"></i>Facile</span><span><i style="background:'+diffColor('orange')+'"></i>Moyen</span><span><i style="background:'+diffColor('red')+'"></i>Difficile</span></div>';
 
     if(!state.jlists.length){
       html+='<div class="empty-table-note">Crée d\'abord une liste de J dans l\'onglet « 🗂 Listes de J ».</div></div>';
@@ -668,7 +758,7 @@ tbody tr:hover{background:#F7F8FE;}
       ['green','orange','red'].forEach(function(col){
         var letter=col==='green'?'g':col==='orange'?'o':'r';
         var active=c.difficulty===col?' active':'';
-        html+='<div class="diff-dot '+letter+active+'" data-action="set-difficulty" data-subject="'+s.id+'" data-id="'+c.id+'" data-diff="'+col+'" title="'+col+'"></div>';
+        html+='<div class="diff-dot '+letter+active+'" style="background:'+diffColor(col)+'" data-action="set-difficulty" data-subject="'+s.id+'" data-id="'+c.id+'" data-diff="'+col+'" title="'+col+'"></div>';
       });
       html+='</div></td>';
       html+='<td class="col-list"><select data-action="course-list" data-subject="'+s.id+'" data-id="'+c.id+'">';
@@ -683,9 +773,12 @@ tbody tr:hover{background:#F7F8FE;}
         html+='<span class="rev-empty">—</span>';
       } else {
         courseEvs.forEach(function(e){
-          var cls='rev-chip'+(e.done?' done':'')+((!e.done && e.scheduled<todayISO())?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
-          html+='<span class="'+cls+'" data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'">'+
-            '<span class="rj">J'+e.interval+'</span><span class="rd">'+fmtFR(e.scheduled)+'</span></span>';
+          var late=lateDaysFor(e);
+          var cls='rev-chip'+(e.done?' done':'')+(late>0?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
+          var lc=lateColor(late);
+          var style = lc ? ' style="background:'+lc+'22;"' : '';
+          html+='<span class="'+cls+'"'+style+' data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'">'+
+            '<span class="rj">J'+e.interval+'</span><span class="rd"'+(lc?' style="color:'+lc+';font-weight:600;"':'')+'>'+fmtFR(e.scheduled)+(late>0?' (+'+late+'j)':'')+'</span></span>';
         });
       }
       html+='</div></td>';
@@ -700,11 +793,93 @@ tbody tr:hover{background:#F7F8FE;}
     return html;
   }
 
+  // ---------------- settings view ----------------
+  function renderSettings(){
+    var dc=state.settings.diffColors, lc=state.settings.lateColors;
+    var html='<div class="main-card">';
+    html+='<div class="view-header"><h2 class="serif">⚙️ Réglages</h2></div>';
+    html+='<div class="view-note">Personnalise les couleurs utilisées dans l\'agenda et les tableaux de cours.</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Couleurs selon la difficulté</h3>';
+    html+='<p class="hint">Ces couleurs s\'appliquent aux cours selon leur niveau de difficulté (partout dans l\'application).</p>';
+    [['green','Facile'],['orange','Moyen'],['red','Difficile']].forEach(function(row){
+      html+='<div class="color-row"><label>'+row[1]+'</label>'+
+        '<input type="color" value="'+dc[row[0]]+'" data-action="set-diff-color" data-key="'+row[0]+'">'+
+        '<span class="swatch-value mono">'+dc[row[0]].toUpperCase()+'</span></div>';
+    });
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Couleurs de retard</h3>';
+    html+='<p class="hint">Un cours non coché le jour prévu est automatiquement reporté au jour suivant, et continue d\'être reporté tant qu\'il n\'est pas fait. Ces couleurs indiquent le nombre de jours de retard.</p>';
+    html+='<div class="color-row"><label>Reporté d\'1 jour</label>'+
+      '<input type="color" value="'+lc['1']+'" data-action="set-late-color" data-key="1">'+
+      '<span class="swatch-value mono">'+lc['1'].toUpperCase()+'</span></div>';
+    html+='<div class="color-row"><label>Reporté de 2 jours ou plus</label>'+
+      '<input type="color" value="'+lc['2']+'" data-action="set-late-color" data-key="2">'+
+      '<span class="swatch-value mono">'+lc['2'].toUpperCase()+'</span></div>';
+    html+='</div>';
+
+    html+='<button class="btn btn-mini" data-action="reset-settings">Réinitialiser les couleurs par défaut</button>';
+    html+='</div>';
+    return html;
+  }
+
+  // ---------------- daily agenda bar (fixed bottom) ----------------
+  function renderDailyAgendaBar(){
+    var today=todayISO();
+    var day = state.dailyAgendaManualNav ? (state.dailyAgendaDay||today) : today;
+    var events = buildDailyAgendaEvents();
+    var dayEvents = events.filter(function(e){ return e.effectiveDate===day; }).sort(function(a,b){
+      if(b.late!==a.late) return b.late-a.late;
+      if(a.interval!==b.interval) return a.interval-b.interval;
+      return a.courseName<b.courseName?-1:1;
+    });
+    var collapsed=state.dailyAgendaCollapsed;
+    var dLabel = fmtFR(day)+' '+MONTHS[parseISO(day).getMonth()];
+
+    var html='<div class="daily-agenda-bar">';
+    html+='<div class="dab-handle" data-action="toggle-daily-agenda">';
+    html+='<span class="dab-title">📅 Agenda du jour · '+dLabel+(day===today?' (aujourd\'hui)':'')+'</span>';
+    html+='<span class="dab-count">'+dayEvents.length+' cours</span>';
+    html+='<span class="dab-toggle">'+(collapsed?'▲':'▼')+'</span>';
+    html+='</div>';
+
+    if(!collapsed){
+      html+='<div class="dab-nav">'+
+        '<button class="btn btn-mini" data-action="dab-prev" data-day="'+day+'">&larr; Veille</button>'+
+        '<button class="btn btn-mini" data-action="dab-today">Aujourd\'hui</button>'+
+        '<button class="btn btn-mini" data-action="dab-next" data-day="'+day+'">Lendemain &rarr;</button>'+
+        '</div>';
+      html+='<div class="dab-list">';
+      if(!dayEvents.length){
+        html+='<div class="agenda-empty">Aucun cours prévu ce jour-là.</div>';
+      } else {
+        dayEvents.forEach(function(e){
+          var lc=lateColor(e.late);
+          var style = lc ? ' style="border-left-color:'+lc+';"' : '';
+          html+='<label class="dab-item'+(e.done?' done':'')+'"'+style+'>';
+          html+='<input type="checkbox" '+(e.done?'checked':'')+' data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">';
+          html+='<span class="adiff" style="background:'+diffColor(e.difficulty)+'"></span>';
+          html+='<span class="dab-info"><span class="dab-name">'+escapeHTML(e.courseName)+'</span>'+
+            '<span class="dab-sub">'+escapeHTML(e.subjectName)+' · J'+e.interval+'</span></span>';
+          if(e.late>0 && !e.done){ html+='<span class="dab-late" style="color:'+lc+';">+'+e.late+'j</span>'; }
+          html+='</label>';
+        });
+      }
+      html+='</div>';
+    }
+    html+='</div>';
+    return html;
+  }
+
   function renderMain(){
     if(state.currentView==='home') return renderHome();
     if(state.currentView==='agenda') return renderAgenda();
     if(state.currentView==='lists') return renderLists();
     if(state.currentView==='subjects') return renderSubjects();
+    if(state.currentView==='settings') return renderSettings();
     if(state.currentView && state.data[state.currentView]!==undefined) return renderSubject(state.currentView);
     return renderHome();
   }
@@ -714,7 +889,9 @@ tbody tr:hover{background:#F7F8FE;}
     html+='<div class="app-sub">Révisions espacées · sauvegarde automatique locale</div>';
     html+=renderTabs();
     html+=renderMain();
+    html+=renderDailyAgendaBar();
     app.innerHTML=html;
+    app.style.paddingBottom = state.dailyAgendaCollapsed ? '64px' : '46vh';
 
     if(state.addingSubject){
       var input=document.getElementById('new-subject-input');
@@ -749,7 +926,7 @@ tbody tr:hover{background:#F7F8FE;}
     if(action==='select-view'){
       state.currentView=el.dataset.view;
       state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
-      if(el.dataset.view && state.data[el.dataset.view]===undefined && el.dataset.view!=='agenda' && el.dataset.view!=='lists' && el.dataset.view!=='home' && el.dataset.view!=='subjects'){
+      if(el.dataset.view && state.data[el.dataset.view]===undefined && el.dataset.view!=='agenda' && el.dataset.view!=='lists' && el.dataset.view!=='home' && el.dataset.view!=='subjects' && el.dataset.view!=='settings'){
         loadSubjectData(el.dataset.view).then(render);
       } else { render(); }
     }
@@ -785,6 +962,12 @@ tbody tr:hover{background:#F7F8FE;}
     else if(action==='cal-next'){ state.calendarMonth=new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth()+1, 1); render(); }
     else if(action==='cal-today'){ state.calendarMonth=startOfMonth(new Date()); state.selectedDay=todayISO(); render(); }
     else if(action==='select-day'){ state.selectedDay=el.dataset.day; render(); }
+
+    else if(action==='toggle-daily-agenda'){ state.dailyAgendaCollapsed=!state.dailyAgendaCollapsed; render(); }
+    else if(action==='dab-prev'){ state.dailyAgendaManualNav=true; state.dailyAgendaDay=addDays(el.dataset.day,-1); render(); }
+    else if(action==='dab-next'){ state.dailyAgendaManualNav=true; state.dailyAgendaDay=addDays(el.dataset.day,1); render(); }
+    else if(action==='dab-today'){ state.dailyAgendaManualNav=false; state.dailyAgendaDay=null; render(); }
+    else if(action==='reset-settings'){ state.settings={diffColors:Object.assign({},DEFAULT_SETTINGS.diffColors), lateColors:Object.assign({},DEFAULT_SETTINGS.lateColors)}; persistSettings().then(render); }
   });
 
   app.addEventListener('change', function(e){
@@ -794,13 +977,15 @@ tbody tr:hover{background:#F7F8FE;}
     if(action==='navigate-menu'){
       state.currentView=el.value;
       state.confirmDeleteSubject=null; state.confirmDeleteCourseId=null; state.confirmDeleteListId=null;
-      if(state.currentView!=='agenda' && state.currentView!=='lists' && state.currentView!=='home' && state.currentView!=='subjects' && state.data[state.currentView]===undefined){
+      if(state.currentView!=='agenda' && state.currentView!=='lists' && state.currentView!=='home' && state.currentView!=='subjects' && state.currentView!=='settings' && state.data[state.currentView]===undefined){
         loadSubjectData(state.currentView).then(render);
       } else render();
     }
     else if(action==='course-name'){ updateCourse(el.dataset.subject, el.dataset.id, {name:el.value}); }
     else if(action==='course-date'){ updateCourse(el.dataset.subject, el.dataset.id, {dateLearned:el.value}).then(render); }
     else if(action==='course-list'){ updateCourse(el.dataset.subject, el.dataset.id, {listId:el.value}).then(render); }
+    else if(action==='set-diff-color'){ state.settings.diffColors[el.dataset.key]=el.value; persistSettings().then(render); }
+    else if(action==='set-late-color'){ state.settings.lateColors[el.dataset.key]=el.value; persistSettings().then(render); }
   });
 
   app.addEventListener('input', function(e){
@@ -815,6 +1000,7 @@ tbody tr:hover{background:#F7F8FE;}
   async function init(){
     app.innerHTML='<div class="app-title"><h1>Classeur de révisions</h1></div><div class="main-card"><div class="empty-state"><p>Chargement…</p></div></div>';
     await loadJLists();
+    await loadSettings();
     await loadSubjects();
     for(var i=0;i<state.subjects.length;i++){ await loadSubjectData(state.subjects[i].id); }
     state.selectedDay=todayISO();
