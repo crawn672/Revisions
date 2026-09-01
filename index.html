@@ -162,8 +162,15 @@ tbody tr:hover{background:#F7F8FE;}
 .cal-day.today{border-color:var(--teal); font-weight:700;}
 .cal-day.selected{background:var(--teal); color:#fff;}
 .cal-day.has-events:not(.selected){background:#fff; border-color:var(--line);}
+.cal-day.overloaded{border-color:var(--red);}
+.cal-day .overload-flag{position:absolute; top:3px; right:4px; font-size:9px; line-height:1;}
+.day-overload-banner{display:flex; align-items:center; gap:6px; background:var(--red-bg); color:var(--red); border-radius:7px; padding:7px 10px; font-size:12px; font-weight:500; margin-bottom:8px;}
 .cal-day .dots{display:flex; gap:2px; margin-top:2px; position:absolute; bottom:5px;}
 .cal-day .dots span{width:4px; height:4px; border-radius:50%;}
+.cal-day .load-badge{position:absolute; bottom:2px; right:3px; font-size:8.5px; color:var(--ink-faint); font-weight:600;}
+.cal-day.overloaded .load-badge{color:var(--red);}
+.day-load-summary{display:flex; align-items:center; gap:6px; font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--ink-soft); margin:0 2px 10px;}
+.day-load-summary b{color:var(--ink);}
 
 .agenda-list{display:flex; flex-direction:column; gap:6px;}
 .agenda-empty{color:var(--ink-faint); font-size:12.5px; padding:6px 2px;}
@@ -174,6 +181,7 @@ tbody tr:hover{background:#F7F8FE;}
 .agenda-item .aname{font-weight:500; display:block;}
 .agenda-item .asub{font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-faint);}
 .agenda-item .ainterval{font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-faint); white-space:nowrap;}
+.agenda-item .amethod{display:block; font-size:11px; color:var(--teal-dark); font-style:italic; margin-top:2px;}
 .agenda-item.done{opacity:.5;}
 .agenda-item.done .aname{text-decoration:line-through;}
 .load-note{font-size:11px; color:var(--ink-faint); margin:-4px 0 14px 2px;}
@@ -233,6 +241,7 @@ tbody tr:hover{background:#F7F8FE;}
 .dab-info{flex:1; min-width:0; display:flex; flex-direction:column;}
 .dab-name{font-weight:500;}
 .dab-sub{font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-faint);}
+.dab-method{font-size:10.5px; color:var(--teal-dark); font-style:italic;}
 .dab-late{font-family:'IBM Plex Mono', monospace; font-size:11px; font-weight:600; white-space:nowrap;}
 .dab-item.done{opacity:.5;}
 .dab-item.done .dab-name{text-decoration:line-through;}
@@ -281,9 +290,16 @@ tbody tr:hover{background:#F7F8FE;}
     diffColors:{ green:'#4C9A82', orange:'#8A63D2', red:'#C94C7C' },
     lateColors:{ '1':'#E0A526', '2':'#D64545' },
     diffWeights:{ green:1, orange:2, red:3 },   // hiérarchie de la difficulté : 1 rouge = 3 verts, 1 orange = 2 verts (par défaut)
-    dailyCap: 12,                                // plafond pondéré de cours par jour
+    dailyCap: 12,                                // plafond pondéré de cours par jour (par défaut)
+    weekdayCaps: {},                              // plafond par jour de semaine : { 0..6: cap } (0=Lu ... 6=Di), remplace le défaut si présent
+    capPeriods: [],                               // périodes spécifiques (ex: stage) : [{id,label,start,end,days:{0..6:cap}}]
+                                                    // days : plafond par jour de semaine PENDANT la période ; un jour non renseigné hérite du plafond
+                                                    // par jour de semaine global (weekdayCaps), lui-même hérité du plafond par défaut (dailyCap).
+    overflowDays: [5,6],                          // jours de semaine (0=Lu...6=Di) sur lesquels rabattre en priorité les cours en trop
+                                                    // quand une semaine est pleine (aucune place dans la tolérance) ; par défaut Sa+Di.
     jPriority: {},                               // ordre d'importance des J, PAR LISTE : { listId: [J,...] }
-    jTolerance: {}                                // tolérance ± jours par J, PAR LISTE : { listId: { J: tol } }
+    jTolerance: {},                                // tolérance ± jours par J, PAR LISTE : { listId: { J: tol } }
+    studyMethods: {}                              // méthode de révision conseillée par J, PAR LISTE : { listId: { J: "texte libre" } }
   };
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -297,6 +313,7 @@ tbody tr:hover{background:#F7F8FE;}
   function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
   function fmtFR(iso){ var d=parseISO(iso); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); }
   function isWeekend(iso){ var day=parseISO(iso).getDay(); return day===0||day===6; }
+  function dowIndex(iso){ return (parseISO(iso).getDay()+6)%7; } // 0=Lu ... 6=Di, aligné sur DOW
 
   // ---------------- date / local storage ----------------
   // La date du jour est recalculée à chaque rendu : elle reste donc correcte
@@ -355,8 +372,12 @@ tbody tr:hover{background:#F7F8FE;}
       lateColors: Object.assign({}, DEFAULT_SETTINGS.lateColors),
       diffWeights: Object.assign({}, DEFAULT_SETTINGS.diffWeights),
       dailyCap: DEFAULT_SETTINGS.dailyCap,
+      weekdayCaps: {},
+      capPeriods: [],
+      overflowDays: DEFAULT_SETTINGS.overflowDays.slice(),
       jPriority: {},
-      jTolerance: {}
+      jTolerance: {},
+      studyMethods: {}
     };
     if(raw){
       try{
@@ -365,11 +386,47 @@ tbody tr:hover{background:#F7F8FE;}
         if(parsed.lateColors) Object.assign(s.lateColors, parsed.lateColors);
         if(parsed.diffWeights) Object.assign(s.diffWeights, parsed.diffWeights);
         if(typeof parsed.dailyCap==='number' && parsed.dailyCap>0) s.dailyCap=parsed.dailyCap;
+        if(parsed.weekdayCaps && typeof parsed.weekdayCaps==='object' && !Array.isArray(parsed.weekdayCaps)){
+          Object.keys(parsed.weekdayCaps).forEach(function(k){
+            var v=parsed.weekdayCaps[k];
+            if(typeof v==='number' && v>0) s.weekdayCaps[k]=v;
+          });
+        }
+        if(Array.isArray(parsed.overflowDays)){
+          var seenOD={};
+          s.overflowDays = parsed.overflowDays.filter(function(n){
+            var kn=Number(n);
+            if(kn>=0 && kn<=6 && !seenOD[kn]){ seenOD[kn]=true; return true; }
+            return false;
+          }).map(Number);
+        }
+        if(Array.isArray(parsed.capPeriods)){
+          s.capPeriods = parsed.capPeriods.filter(function(p){
+            return p && typeof p.start==='string' && typeof p.end==='string';
+          }).map(function(p){
+            var days={};
+            if(p.days && typeof p.days==='object'){
+              Object.keys(p.days).forEach(function(k){
+                var kn=Number(k), v=p.days[k];
+                if(kn>=0 && kn<=6 && typeof v==='number' && v>0) days[kn]=v;
+              });
+            }
+            return {id:p.id||uid('cp'), label:p.label||'', start:p.start, end:p.end, days:days};
+          });
+        }
         if(parsed.jPriority && typeof parsed.jPriority==='object' && !Array.isArray(parsed.jPriority)){
           Object.keys(parsed.jPriority).forEach(function(lid){ s.jPriority[lid]=Array.isArray(parsed.jPriority[lid])?parsed.jPriority[lid].slice():[]; });
         }
         if(parsed.jTolerance && typeof parsed.jTolerance==='object'){
           Object.keys(parsed.jTolerance).forEach(function(lid){ s.jTolerance[lid]=Object.assign({}, parsed.jTolerance[lid]); });
+        }
+        if(parsed.studyMethods && typeof parsed.studyMethods==='object'){
+          Object.keys(parsed.studyMethods).forEach(function(lid){
+            var src=parsed.studyMethods[lid]||{};
+            var dst={};
+            Object.keys(src).forEach(function(k){ if(typeof src[k]==='string') dst[k]=src[k]; });
+            s.studyMethods[lid]=dst;
+          });
         }
       } catch(e){}
     }
@@ -390,10 +447,18 @@ tbody tr:hover{background:#F7F8FE;}
     var slope=(last[1]-last2[1])/(last[0]-last2[0]);
     return Math.max(1, Math.round(last[1]+slope*(J-last[0])));
   }
-  // Maintient, pour CHAQUE liste de J, un ordre de priorité et des tolérances qui reflètent
-  // exactement les jours actuellement présents dans cette liste : ajoute les nouveaux jours
-  // (à la fin, donc priorité la plus basse par défaut), retire ceux qui n'existent plus,
-  // sans jamais casser l'ordre déjà choisi par l'utilisateur pour les jours qui restent.
+  // Méthode de révision suggérée par défaut (avant réglage manuel) selon la « distance » du J.
+  // Purement indicatif : entièrement modifiable ensuite dans les réglages, par liste et par J.
+  function defaultMethodFor(J){
+    if(J<=3) return 'Relecture approfondie du cours';
+    if(J<=10) return 'Lecture rapide + quelques QCM';
+    if(J<=30) return 'Uniquement des QCM, en revoyant ce qui est oublié';
+    return 'Uniquement des QCM';
+  }
+  // Maintient, pour CHAQUE liste de J, un ordre de priorité, des tolérances et des méthodes de
+  // révision qui reflètent exactement les jours actuellement présents dans cette liste : ajoute les
+  // nouveaux jours (à la fin / avec une méthode par défaut), retire ceux qui n'existent plus, sans
+  // jamais casser les réglages déjà choisis par l'utilisateur pour les jours qui restent.
   // Nettoie aussi les entrées de listes supprimées.
   async function syncSettingsWithJLists(){
     if(!state.settings) return;
@@ -404,6 +469,7 @@ tbody tr:hover{background:#F7F8FE;}
       var days=(l.days||[]).slice();
       if(!state.settings.jPriority[l.id]){ state.settings.jPriority[l.id]=[]; changed=true; }
       if(!state.settings.jTolerance[l.id]){ state.settings.jTolerance[l.id]={}; changed=true; }
+      if(!state.settings.studyMethods[l.id]){ state.settings.studyMethods[l.id]={}; changed=true; }
       var order=state.settings.jPriority[l.id];
       var kept=order.filter(function(J){ return days.indexOf(J)!==-1; });
       if(kept.length!==order.length){ changed=true; }
@@ -412,9 +478,13 @@ tbody tr:hover{background:#F7F8FE;}
       var tol=state.settings.jTolerance[l.id];
       Object.keys(tol).forEach(function(k){ if(days.indexOf(Number(k))===-1){ delete tol[k]; changed=true; } });
       days.forEach(function(J){ if(tol[J]===undefined){ tol[J]=defaultToleranceFor(J); changed=true; } });
+      var meth=state.settings.studyMethods[l.id];
+      Object.keys(meth).forEach(function(k){ if(days.indexOf(Number(k))===-1){ delete meth[k]; changed=true; } });
+      days.forEach(function(J){ if(meth[J]===undefined){ meth[J]=defaultMethodFor(J); changed=true; } });
     });
     Object.keys(state.settings.jPriority).forEach(function(lid){ if(!liveIds[lid]){ delete state.settings.jPriority[lid]; changed=true; } });
     Object.keys(state.settings.jTolerance).forEach(function(lid){ if(!liveIds[lid]){ delete state.settings.jTolerance[lid]; changed=true; } });
+    Object.keys(state.settings.studyMethods).forEach(function(lid){ if(!liveIds[lid]){ delete state.settings.studyMethods[lid]; changed=true; } });
     if(changed) await persistSettings();
   }
 
@@ -422,6 +492,10 @@ tbody tr:hover{background:#F7F8FE;}
   function toleranceFor(J, listId){
     var t=state.settings&&state.settings.jTolerance&&state.settings.jTolerance[listId]&&state.settings.jTolerance[listId][J];
     return (t!==undefined && t!==null && t!=='') ? Number(t) : defaultToleranceFor(J);
+  }
+  function methodFor(J, listId){
+    var m=state.settings&&state.settings.studyMethods&&state.settings.studyMethods[listId]&&state.settings.studyMethods[listId][J];
+    return (m!==undefined && m!==null && m!=='') ? m : defaultMethodFor(J);
   }
   function weightFor(diff){
     var w=state.settings&&state.settings.diffWeights;
@@ -452,7 +526,7 @@ tbody tr:hover{background:#F7F8FE;}
           events.push({
             courseId:c.id, subjectId:s.id, subjectName:s.name, courseName:c.name||'(sans nom)',
             interval:J, listId:list.id, weight:weightFor(c.difficulty), difficulty:c.difficulty,
-            target:target, tol:toleranceFor(J, list.id),
+            target:target, tol:toleranceFor(J, list.id), method:methodFor(J, list.id),
             done: !!(c.done && c.done[J])
           });
         });
@@ -462,6 +536,7 @@ tbody tr:hover{background:#F7F8FE;}
   }
 
   function scheduleEvents(events){
+    var today = todayISO();
     var sorted = events.slice().sort(function(a,b){
       var ra=jPriorityRank(a.interval, a.listId), rb=jPriorityRank(b.interval, b.listId);
       if(ra!==rb) return ra-rb; // priorité des J définie dans les réglages (par liste)
@@ -471,8 +546,27 @@ tbody tr:hover{background:#F7F8FE;}
     });
     var loads = {};
     var dailyCap = (state.settings&&state.settings.dailyCap)||DEFAULT_SETTINGS.dailyCap;
-    var capOf = function(date){ return dailyCap; };
+    var capPeriods = (state.settings&&state.settings.capPeriods)||[];
+    var weekdayCaps = (state.settings&&state.settings.weekdayCaps)||{};
+    var capOf = function(date){
+      var wd = dowIndex(date);
+      // plafond "de base" pour ce jour de semaine, hors période spécifique
+      var fallback = (typeof weekdayCaps[wd]==='number' && weekdayCaps[wd]>0) ? weekdayCaps[wd] : dailyCap;
+      // une période spécifique (ex: stage) qui couvre la date l'emporte, jour de semaine par jour de semaine ;
+      // si elle ne précise rien pour ce jour-là, on retombe sur le plafond de base ci-dessus.
+      for(var i=0;i<capPeriods.length;i++){
+        var p=capPeriods[i];
+        if(date>=p.start && date<=p.end){
+          var pd = p.days && p.days[wd];
+          return (typeof pd==='number' && pd>0) ? pd : fallback;
+        }
+      }
+      return fallback;
+    };
     var loadOf = function(date){ return loads[date]||0; };
+    var overflowDays = (state.settings&&state.settings.overflowDays) || DEFAULT_SETTINGS.overflowDays;
+
+    // ---- passe 1 : placement idéal autour de la date théorique (J ± tolérance), en respectant les plafonds ----
     sorted.forEach(function(e){
       var candidates=[];
       for(var d=-e.tol; d<=e.tol; d++){ candidates.push(addDays(e.target,d)); }
@@ -482,14 +576,74 @@ tbody tr:hover{background:#F7F8FE;}
         var dte=candidates[i];
         if(loadOf(dte)+e.weight<=capOf(dte)){ chosen=dte; break; }
       }
+      // Aucune place dans la fenêtre de tolérance (semaine pleine) : on tente de rabattre sur les
+      // jours de report choisis dans les réglages (ex. week-end), même en dehors de la tolérance.
+      if(!chosen && overflowDays && overflowDays.length){
+        var overflowCandidates=[];
+        var maxRadius=60; // recherche jusqu'à ~2 mois avant/après, largement suffisant en pratique
+        for(var r=1;r<=maxRadius;r++){
+          var after=addDays(e.target,r), before=addDays(e.target,-r);
+          if(overflowDays.indexOf(dowIndex(after))!==-1) overflowCandidates.push(after);
+          if(overflowDays.indexOf(dowIndex(before))!==-1) overflowCandidates.push(before);
+        }
+        overflowCandidates.sort(function(a,b){ return Math.abs(daysBetween(a,e.target))-Math.abs(daysBetween(b,e.target)); });
+        for(var k=0;k<overflowCandidates.length;k++){
+          var ofd=overflowCandidates[k];
+          if(loadOf(ofd)+e.weight<=capOf(ofd)){ chosen=ofd; break; }
+        }
+        // Toujours rien : même les jours de report sont pleins. On accepte alors de dépasser le
+        // plafond, sur le jour le moins chargé parmi tolérance + jours de report ; ce dépassement
+        // est ensuite signalé dans l'agenda (voir overloadedDays plus bas).
+        if(!chosen){
+          var allC=candidates.concat(overflowCandidates);
+          var best=allC[0], bestLoad=loadOf(best);
+          allC.forEach(function(dte){ var ld=loadOf(dte); if(ld<bestLoad){ bestLoad=ld; best=dte; } });
+          chosen=best;
+        }
+      }
+      // Aucun jour de report configuré : comportement précédent (le moins chargé dans la tolérance).
       if(!chosen){
-        var best=candidates[0], bestLoad=loadOf(best);
-        candidates.forEach(function(dte){ var ld=loadOf(dte); if(ld<bestLoad){ bestLoad=ld; best=dte; } });
-        chosen=best;
+        var best2=candidates[0], bestLoad2=loadOf(best2);
+        candidates.forEach(function(dte){ var ld=loadOf(dte); if(ld<bestLoad2){ bestLoad2=ld; best2=dte; } });
+        chosen=best2;
       }
       loads[chosen]=(loads[chosen]||0)+e.weight;
       e.scheduled=chosen;
+      e.carriedDays=0; // nombre de jours de report dû à un cours non coché (rempli en passe 2 si besoin)
     });
+
+    // ---- passe 2 : report des cours non cochés dont le jour prévu est ENTIÈREMENT passé ----
+    // Un cours prévu aujourd'hui n'est jamais touché ici, même non coché : il peut encore être fait
+    // avant la fin de la journée. Ce n'est qu'une fois le jour révolu (donc à la prochaine ouverture
+    // de l'appli après minuit) qu'un cours non fait devient « en retard » et doit être replacé plus
+    // loin, à la première date où il reste de la place selon les plafonds — sans jamais dépasser ces
+    // plafonds ni déplacer les cours déjà bien placés.
+    var overdue = sorted.filter(function(e){ return !e.done && e.scheduled < today; });
+    overdue.sort(function(a,b){
+      var ra=jPriorityRank(a.interval,a.listId), rb=jPriorityRank(b.interval,b.listId);
+      if(ra!==rb) return ra-rb; // même ordre de priorité que la passe 1
+      if(a.scheduled!==b.scheduled) return a.scheduled<b.scheduled?-1:1; // le plus ancien d'abord
+      return a.courseId<b.courseId?-1:1;
+    });
+    overdue.forEach(function(e){
+      var originalScheduled = e.scheduled;
+      var d = today;
+      var guard = 3650; // garde-fou anti-boucle infinie (≈ 10 ans)
+      while(loadOf(d)+e.weight>capOf(d) && guard-->0){ d=addDays(d,1); }
+      loads[d]=(loads[d]||0)+e.weight;
+      e.scheduled=d;
+      e.carriedDays=daysBetween(d, originalScheduled);
+    });
+
+    // ---- détection des jours en surcharge (dépassement du plafond malgré les jours de report) ----
+    var overloadedDays = {};
+    Object.keys(loads).forEach(function(date){
+      var cap=capOf(date);
+      if(loads[date]>cap) overloadedDays[date]={load:loads[date], cap:cap};
+    });
+    sorted.overloadedDays = overloadedDays;
+    sorted.capOf = capOf; // exposé pour l'affichage (ex: plafond du jour sélectionné dans l'agenda)
+
     return sorted;
   }
 
@@ -593,6 +747,13 @@ tbody tr:hover{background:#F7F8FE;}
     });
     return c;
   }
+  // Charge pondérée d'un jour = somme des poids (réglages > hiérarchie de la difficulté) des cours
+  // prévus ce jour-là. C'est ce nombre qui est comparé au plafond quotidien.
+  function dayLoad(evs){
+    var total=0;
+    (evs||[]).forEach(function(e){ total+=e.weight; });
+    return total;
+  }
   function diffColor(diff){
     var c=state.settings&&state.settings.diffColors;
     if(diff==='green') return (c&&c.green)||'var(--green)';
@@ -600,11 +761,12 @@ tbody tr:hover{background:#F7F8FE;}
     if(diff==='red') return (c&&c.red)||'var(--red)';
     return 'var(--ink-faint)';
   }
-  // Nombre de jours de retard pour un événement non fait (0 si à l'heure / dans le futur / fait)
+  // Nombre de jours de report pour un cours non fait : dès que son jour prévu est passé sans être
+  // coché, il est automatiquement replacé (en respectant les plafonds, voir scheduleEvents) et ce
+  // nombre indique de combien de jours il a dû être repoussé par rapport à sa précédente place.
   function lateDaysFor(e){
     if(e.done) return 0;
-    var d=daysBetween(todayISO(), e.scheduled);
-    return d>0 ? d : 0;
+    return e.carriedDays||0;
   }
   function lateColor(days){
     if(!days || days<=0) return null;
@@ -612,14 +774,14 @@ tbody tr:hover{background:#F7F8FE;}
     if(days===1) return (c&&c['1'])||DEFAULT_SETTINGS.lateColors['1'];
     return (c&&c['2'])||DEFAULT_SETTINGS.lateColors['2'];
   }
-  // Construit les événements pour l'agenda journalier : un cours non coché le jour prévu
-  // n'est jamais perdu, il est automatiquement reporté au jour courant tant qu'il n'est pas fait.
+  // Construit les événements pour l'agenda journalier. Le report des cours non cochés est déjà
+  // géré par le moteur de planification (scheduleEvents) : e.scheduled est donc directement la
+  // bonne date à afficher partout (agenda du jour, tableau, calendrier), sans recalcul cosmétique
+  // séparé ici.
   function buildDailyAgendaEvents(){
-    var today=todayISO();
     return getSchedule().map(function(e){
-      var effectiveDate = e.done ? e.scheduled : (e.scheduled<=today ? today : e.scheduled);
       var late = lateDaysFor(e);
-      return Object.assign({}, e, {effectiveDate:effectiveDate, late:late});
+      return Object.assign({}, e, {effectiveDate:e.scheduled, late:late});
     });
   }
 
@@ -693,6 +855,7 @@ tbody tr:hover{background:#F7F8FE;}
   // ---------------- agenda view (global) ----------------
   function renderAgenda(){
     var schedule=getSchedule();
+    var overloaded = schedule.overloadedDays || {};
     var events={};
     schedule.forEach(function(e){ (events[e.scheduled]=events[e.scheduled]||[]).push(e); });
 
@@ -718,15 +881,17 @@ tbody tr:hover{background:#F7F8FE;}
     for(var day=1; day<=daysInMonth; day++){
       var iso=toISODate(new Date(y,m,day));
       var evs=events[iso]||[];
-      var cls='cal-day'+(isWeekend(iso)?' weekend':'');
+      var cls='cal-day'+(isWeekend(iso)?' weekend':'')+(overloaded[iso]?' overloaded':'');
       if(iso===todayISO()) cls+=' today';
       if(iso===state.selectedDay) cls+=' selected';
       if(evs.length) cls+=' has-events';
-      html+='<div class="'+cls+'" data-action="select-day" data-day="'+iso+'">'+day;
+      html+='<div class="'+cls+'" data-action="select-day" data-day="'+iso+'" title="'+(overloaded[iso]?'Trop de cours ce jour-là':'')+'">'+day;
+      if(overloaded[iso]) html+='<span class="overload-flag">⚠️</span>';
       if(evs.length){
         html+='<div class="dots">';
         evs.slice(0,4).forEach(function(e){ html+='<span style="background:'+diffColor(e.difficulty)+'"></span>'; });
         html+='</div>';
+        html+='<span class="load-badge">'+dayLoad(evs)+'</span>';
       }
       html+='</div>';
     }
@@ -737,6 +902,17 @@ tbody tr:hover{background:#F7F8FE;}
     var selDay=state.selectedDay||todayISO();
     var selEvs=(events[selDay]||[]).slice().sort(function(a,b){ return a.interval-b.interval; });
     html+='<div class="calendar-header" style="margin-top:2px;"><div class="month-label" style="font-size:14px;">'+fmtFR(selDay)+' '+MONTHS[parseISO(selDay).getMonth()]+' '+parseISO(selDay).getFullYear()+'</div></div>';
+    if(overloaded[selDay]){
+      html+='<div class="day-overload-banner">⚠️ Trop de cours prévus ce jour-là : '+overloaded[selDay].load+' au lieu du plafond de '+overloaded[selDay].cap+'. Aucun jour de report disponible n\'avait de place.</div>';
+    }
+    if(selEvs.length){
+      var selCounts=diffCounts(selEvs.map(function(e){ return {difficulty:e.difficulty}; }));
+      var detailParts=[];
+      if(selCounts.g) detailParts.push(selCounts.g+' verte'+(selCounts.g>1?'s':''));
+      if(selCounts.o) detailParts.push(selCounts.o+' orange'+(selCounts.o>1?'s':''));
+      if(selCounts.r) detailParts.push(selCounts.r+' rouge'+(selCounts.r>1?'s':''));
+      html+='<div class="day-load-summary">'+selEvs.length+' cours ('+detailParts.join(' + ')+') = <b>'+dayLoad(selEvs)+' cours en équivalence</b> · plafond du jour : '+schedule.capOf(selDay)+'</div>';
+    }
     html+='<div class="agenda-list">';
     if(!selEvs.length){ html+='<div class="agenda-empty">Aucune révision prévue ce jour-là.</div>'; }
     else{
@@ -748,7 +924,8 @@ tbody tr:hover{background:#F7F8FE;}
         html+='<label class="agenda-item'+(e.done?' done':'')+'"'+style+'>'+
           '<input type="checkbox" '+(e.done?'checked':'')+' data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">'+
           '<span class="adiff" style="background:'+diffColor(e.difficulty)+'"></span>'+
-          '<span class="ainfo"><span class="aname">'+escapeHTML(e.courseName)+'</span><span class="asub">'+escapeHTML(e.subjectName)+'</span></span>'+
+          '<span class="ainfo"><span class="aname">'+escapeHTML(e.courseName)+'</span><span class="asub">'+escapeHTML(e.subjectName)+'</span>'+
+          (e.method?'<span class="amethod">'+escapeHTML(e.method)+'</span>':'')+'</span>'+
           (late>0&&!e.done?'<span class="ainterval" style="color:'+lc+';font-weight:600;">+'+late+'j</span>':'<span class="ainterval">J'+e.interval+(shifted?' *':'')+'</span>')+
         '</label>';
       });
@@ -856,7 +1033,7 @@ tbody tr:hover{background:#F7F8FE;}
           var cls='rev-chip'+(e.done?' done':'')+(late>0?' overdue':'')+(e.scheduled!==e.target?' shifted':'');
           var lc=lateColor(late);
           var style = lc ? ' style="background:'+lc+'22;"' : '';
-          html+='<span class="'+cls+'"'+style+' data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'">'+
+          html+='<span class="'+cls+'"'+style+' data-action="toggle-done" data-subject="'+s.id+'" data-course="'+c.id+'" data-interval="'+e.interval+'" title="'+escapeHTML(e.method||'')+'">'+
             '<span class="rj">J'+e.interval+'</span><span class="rd"'+(lc?' style="color:'+lc+';font-weight:600;"':'')+'>'+fmtFR(e.scheduled)+(late>0?' (+'+late+'j)':'')+'</span></span>';
         });
       }
@@ -891,7 +1068,7 @@ tbody tr:hover{background:#F7F8FE;}
 
     html+='<div class="settings-section">';
     html+='<h3 class="serif">Couleurs de retard</h3>';
-    html+='<p class="hint">Un cours non coché le jour prévu est automatiquement reporté au jour suivant, et continue d\'être reporté tant qu\'il n\'est pas fait. Ces couleurs indiquent le nombre de jours de retard.</p>';
+    html+='<p class="hint">Un cours non coché le jour prévu est automatiquement replacé, dès le lendemain, à la première date disponible qui respecte les plafonds définis plus bas (jamais avant aujourd\'hui, jamais en dépassant un plafond). Ce report n\'a lieu qu\'une fois par jour, une fois la journée prévue terminée : un cours du jour peut toujours être coché plus tard dans la journée sans être déplacé. Ces couleurs indiquent de combien de jours un cours a dû être repoussé.</p>';
     html+='<div class="color-row"><label>Reporté d\'1 jour</label>'+
       '<input type="color" value="'+lc['1']+'" data-action="set-late-color" data-key="1">'+
       '<span class="swatch-value mono">'+lc['1'].toUpperCase()+'</span></div>';
@@ -917,6 +1094,67 @@ tbody tr:hover{background:#F7F8FE;}
     html+='<div class="color-row"><label>Cours par jour (max.)</label>'+
       '<input type="number" min="1" step="1" style="width:70px;" value="'+state.settings.dailyCap+'" data-action="set-daily-cap">'+
       '<span class="swatch-value mono">'+state.settings.dailyCap+'</span></div>';
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Agenda des plafonds (jours spéciaux)</h3>';
+    html+='<p class="hint">Prévois maintenant des plafonds différents pour plus tard : par jour de la semaine (ex. plus de cours le week-end) ou pour une période précise (ex. stage → seulement 2 cours/jour), réglable là aussi jour par jour (ex. 2 en semaine, plus le week-end). Dès que tu reçois ton emploi du temps, programme directement la période correspondante ici. Dans une période, un jour non renseigné hérite du plafond de ce jour de semaine ci-dessus.</p>';
+
+    html+='<div class="settings-sublist"><div class="settings-sublist-title">Par jour de la semaine</div>';
+    DOW.forEach(function(name,i){
+      var wc=state.settings.weekdayCaps[i];
+      var hasOverride = (wc!==undefined && wc!==null);
+      html+='<div class="color-row"><label style="flex:1;">'+name+'</label>'+
+        '<input type="number" min="1" step="1" style="width:70px;" placeholder="'+state.settings.dailyCap+'" value="'+(hasOverride?wc:'')+'" data-action="set-weekday-cap" data-day="'+i+'">'+
+        (hasOverride
+          ? '<button class="btn btn-mini" data-action="clear-weekday-cap" data-day="'+i+'" title="Revenir au plafond par défaut">✕</button>'
+          : '<span class="swatch-value mono">défaut ('+state.settings.dailyCap+')</span>')+
+        '</div>';
+    });
+    html+='</div>';
+
+    html+='<div class="settings-sublist"><div class="settings-sublist-title">Périodes spécifiques (stage, vacances…)</div>';
+    html+='<p class="hint" style="margin:0 0 10px;">Un jour laissé vide dans une période hérite du plafond de ce jour de semaine ci-dessus (lui-même hérité du plafond par défaut).</p>';
+    if(!state.settings.capPeriods.length){ html+='<div class="empty-table-note">Aucune période spécifique pour le moment.</div>'; }
+    state.settings.capPeriods.slice().sort(function(a,b){ return a.start<b.start?-1:(a.start>b.start?1:0); }).forEach(function(p){
+      html+='<div class="settings-sublist" style="background:var(--paper);">';
+      html+='<div class="settings-sublist-title" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">'+
+        '<span>'+(p.label?escapeHTML(p.label):'(sans nom)')+' <span class="mono" style="font-weight:400; color:var(--ink-faint);">— '+fmtFR(p.start)+' → '+fmtFR(p.end)+'</span></span>'+
+        '<button class="btn btn-mini btn-danger" data-action="delete-cap-period" data-id="'+p.id+'" title="Supprimer la période">✕ Supprimer</button>'+
+        '</div>';
+      DOW.forEach(function(name,i){
+        var pd = p.days && p.days[i];
+        var hasOverride = (typeof pd==='number');
+        var fb = (typeof state.settings.weekdayCaps[i]==='number') ? state.settings.weekdayCaps[i] : state.settings.dailyCap;
+        html+='<div class="color-row"><label style="flex:1;">'+name+'</label>'+
+          '<input type="number" min="1" step="1" style="width:70px;" placeholder="'+fb+'" value="'+(hasOverride?pd:'')+'" data-action="set-period-day-cap" data-period="'+p.id+'" data-day="'+i+'">'+
+          (hasOverride
+            ? '<button class="btn btn-mini" data-action="clear-period-day-cap" data-period="'+p.id+'" data-day="'+i+'" title="Revenir au plafond hérité">✕</button>'
+            : '<span class="swatch-value mono">défaut ('+fb+')</span>')+
+          '</div>';
+      });
+      html+='</div>';
+    });
+    html+='<div class="add-interval" style="margin-top:8px; flex-wrap:wrap; gap:6px;">'+
+      '<input type="text" id="new-period-label" placeholder="Nom (ex: stage)" style="width:120px;">'+
+      '<input type="date" id="new-period-start" style="width:135px;" title="Date de début">'+
+      '<input type="date" id="new-period-end" style="width:135px;" title="Date de fin">'+
+      '<button class="btn btn-mini" data-action="add-cap-period">Ajouter la période</button>'+
+      '</div>';
+    html+='</div>';
+    html+='</div>';
+
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Jours de report en cas de semaine pleine</h3>';
+    html+='<p class="hint">Si aucun jour disponible dans la tolérance d\'un J n\'a de place (toute la semaine est pleine), les cours en trop sont rabattus en priorité sur les jours cochés ci-dessous (par défaut le week-end), même hors tolérance. Si ces jours-là n\'ont pas non plus de place, le cours y reste quand même, et l\'agenda affiche alors une alerte indiquant qu\'il y a trop de cours ce jour-là.</p>';
+    html+='<div class="jlist-chips">';
+    DOW.forEach(function(name,i){
+      var checked = state.settings.overflowDays.indexOf(i)!==-1;
+      html+='<label class="btn btn-mini" style="cursor:pointer; display:inline-flex; align-items:center; gap:5px;'+(checked?' border-color:var(--teal); color:var(--teal-dark);':'')+'">'+
+        '<input type="checkbox" style="margin:0;" data-action="toggle-overflow-day" data-day="'+i+'" '+(checked?'checked':'')+'>'+name+
+        '</label>';
+    });
+    html+='</div>';
     html+='</div>';
 
     html+='<div class="settings-section">';
@@ -957,6 +1195,23 @@ tbody tr:hover{background:#F7F8FE;}
     });
     html+='</div>';
 
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Méthode de révision par J</h3>';
+    html+='<p class="hint">Ce que tu dois faire concrètement à chaque J (ex. J3 : relecture approfondie · J10 : lecture rapide + quelques QCM · J30 : uniquement des QCM en revoyant ce qui est oublié · J75 : uniquement des QCM). Réglable par liste et par J, entièrement libre. Ce texte est affiché à côté de chaque cours dans l\'agenda.</p>';
+    if(!state.jlists.length){ html+='<div class="empty-table-note">Aucune liste de J pour le moment.</div>'; }
+    state.jlists.forEach(function(l){
+      html+='<div class="settings-sublist"><div class="settings-sublist-title">'+escapeHTML(l.name)+'</div>';
+      if(!l.days.length){ html+='<div class="empty-table-note">Cette liste n\'a aucun J pour le moment.</div>'; }
+      l.days.slice().sort(function(a,b){return a-b;}).forEach(function(J){
+        var methMap=state.settings.studyMethods[l.id]||{};
+        var meth=methMap[J]!==undefined?methMap[J]:defaultMethodFor(J);
+        html+='<div class="color-row" style="align-items:flex-start;"><label style="min-width:34px; padding-top:6px;">J'+J+'</label>'+
+          '<input type="text" style="flex:1;" value="'+escapeHTML(meth)+'" placeholder="ex. Lecture rapide + quelques QCM" data-action="set-j-method" data-list="'+l.id+'" data-value="'+J+'"></div>';
+      });
+      html+='</div>';
+    });
+    html+='</div>';
+
     html+='<button class="btn btn-mini" data-action="reset-settings">Réinitialiser tous les réglages</button>';
     html+='</div>';
     return html;
@@ -966,6 +1221,7 @@ tbody tr:hover{background:#F7F8FE;}
   function renderDailyAgendaBar(){
     var today=todayISO();
     var day = state.dailyAgendaManualNav ? (state.dailyAgendaDay||today) : today;
+    var overloaded = getSchedule().overloadedDays || {};
     var events = buildDailyAgendaEvents();
     var dayEvents = events.filter(function(e){ return e.effectiveDate===day; }).sort(function(a,b){
       if(b.late!==a.late) return b.late-a.late;
@@ -977,8 +1233,8 @@ tbody tr:hover{background:#F7F8FE;}
 
     var html='<div class="daily-agenda-bar">';
     html+='<div class="dab-handle" data-action="toggle-daily-agenda">';
-    html+='<span class="dab-title">📅 Agenda du jour · '+dLabel+(day===today?' (aujourd\'hui)':'')+'</span>';
-    html+='<span class="dab-count">'+dayEvents.length+' cours</span>';
+    html+='<span class="dab-title">📅 Agenda du jour · '+dLabel+(day===today?' (aujourd\'hui)':'')+(overloaded[day]?' ⚠️':'')+'</span>';
+    html+='<span class="dab-count">'+dayEvents.length+' cours ('+dayLoad(dayEvents)+' éq.)</span>';
     html+='<span class="dab-toggle">'+(collapsed?'▲':'▼')+'</span>';
     html+='</div>';
 
@@ -988,6 +1244,9 @@ tbody tr:hover{background:#F7F8FE;}
         '<button class="btn btn-mini" data-action="dab-today">Aujourd\'hui</button>'+
         '<button class="btn btn-mini" data-action="dab-next" data-day="'+day+'">Lendemain &rarr;</button>'+
         '</div>';
+      if(overloaded[day]){
+        html+='<div class="day-overload-banner" style="margin:0 16px 8px;">⚠️ Trop de cours ce jour-là : '+overloaded[day].load+' au lieu du plafond de '+overloaded[day].cap+'.</div>';
+      }
       html+='<div class="dab-list">';
       if(!dayEvents.length){
         html+='<div class="agenda-empty">Aucun cours prévu ce jour-là.</div>';
@@ -999,7 +1258,8 @@ tbody tr:hover{background:#F7F8FE;}
           html+='<input type="checkbox" '+(e.done?'checked':'')+' data-action="toggle-done" data-subject="'+e.subjectId+'" data-course="'+e.courseId+'" data-interval="'+e.interval+'">';
           html+='<span class="adiff" style="background:'+diffColor(e.difficulty)+'"></span>';
           html+='<span class="dab-info"><span class="dab-name">'+escapeHTML(e.courseName)+'</span>'+
-            '<span class="dab-sub">'+escapeHTML(e.subjectName)+' · J'+e.interval+'</span></span>';
+            '<span class="dab-sub">'+escapeHTML(e.subjectName)+' · J'+e.interval+'</span>'+
+            (e.method?'<span class="dab-method">'+escapeHTML(e.method)+'</span>':'')+'</span>';
           if(e.late>0 && !e.done){ html+='<span class="dab-late" style="color:'+lc+';">+'+e.late+'j</span>'; }
           html+='</label>';
         });
@@ -1109,10 +1369,44 @@ tbody tr:hover{background:#F7F8FE;}
         lateColors:Object.assign({},DEFAULT_SETTINGS.lateColors),
         diffWeights:Object.assign({},DEFAULT_SETTINGS.diffWeights),
         dailyCap:DEFAULT_SETTINGS.dailyCap,
+        weekdayCaps:{},
+        capPeriods:[],
+        overflowDays:DEFAULT_SETTINGS.overflowDays.slice(),
         jPriority:{},
-        jTolerance:{}
+        jTolerance:{},
+        studyMethods:{}
       };
       persistSettings().then(syncSettingsWithJLists).then(render);
+    }
+    else if(action==='clear-weekday-cap'){
+      delete state.settings.weekdayCaps[Number(el.dataset.day)];
+      persistSettings().then(render);
+    }
+    else if(action==='toggle-overflow-day'){
+      var odIdx=Number(el.dataset.day);
+      var pos=state.settings.overflowDays.indexOf(odIdx);
+      if(pos===-1) state.settings.overflowDays.push(odIdx);
+      else state.settings.overflowDays.splice(pos,1);
+      persistSettings().then(render);
+    }
+    else if(action==='add-cap-period'){
+      var lblP=document.getElementById('new-period-label').value.trim();
+      var stP=document.getElementById('new-period-start').value;
+      var enP=document.getElementById('new-period-end').value;
+      if(stP && enP && stP<=enP){
+        state.settings.capPeriods.push({id:uid('cp'), label:lblP, start:stP, end:enP, days:{}});
+        persistSettings().then(render);
+      } else {
+        alert('Merci de renseigner une date de début et une date de fin (identique ou postérieure au début).');
+      }
+    }
+    else if(action==='delete-cap-period'){
+      state.settings.capPeriods = state.settings.capPeriods.filter(function(p){ return p.id!==el.dataset.id; });
+      persistSettings().then(render);
+    }
+    else if(action==='clear-period-day-cap'){
+      var perC=state.settings.capPeriods.find(function(p){ return p.id===el.dataset.period; });
+      if(perC && perC.days){ delete perC.days[Number(el.dataset.day)]; persistSettings().then(render); }
     }
     else if(action==='jpriority-up'){
       var lidU=el.dataset.list, JvU=Number(el.dataset.value);
@@ -1166,6 +1460,28 @@ tbody tr:hover{background:#F7F8FE;}
       if(!isNaN(cv) && cv>0){ state.settings.dailyCap=cv; persistSettings().then(render); }
       else render();
     }
+    else if(action==='set-weekday-cap'){
+      var dIdx=Number(el.dataset.day);
+      if(el.value===''){ delete state.settings.weekdayCaps[dIdx]; persistSettings().then(render); }
+      else{
+        var wv2=parseFloat(el.value);
+        if(!isNaN(wv2) && wv2>0){ state.settings.weekdayCaps[dIdx]=wv2; persistSettings().then(render); }
+        else render();
+      }
+    }
+    else if(action==='set-period-day-cap'){
+      var perU=state.settings.capPeriods.find(function(p){ return p.id===el.dataset.period; });
+      if(!perU){ render(); }
+      else{
+        var dIdxP=Number(el.dataset.day);
+        if(el.value===''){ delete perU.days[dIdxP]; persistSettings().then(render); }
+        else{
+          var pv=parseFloat(el.value);
+          if(!isNaN(pv) && pv>0){ perU.days[dIdxP]=pv; persistSettings().then(render); }
+          else render();
+        }
+      }
+    }
     else if(action==='set-j-tolerance'){
       var tv=parseInt(el.value,10);
       var lidT=el.dataset.list;
@@ -1174,6 +1490,14 @@ tbody tr:hover{background:#F7F8FE;}
         state.settings.jTolerance[lidT][el.dataset.value]=tv;
         persistSettings().then(render);
       } else render();
+    }
+    else if(action==='set-j-method'){
+      var lidM=el.dataset.list;
+      if(lidM){
+        if(!state.settings.studyMethods[lidM]) state.settings.studyMethods[lidM]={};
+        state.settings.studyMethods[lidM][el.dataset.value]=el.value;
+        persistSettings().then(render);
+      }
     }
   });
 
