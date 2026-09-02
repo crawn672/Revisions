@@ -299,7 +299,13 @@ tbody tr:hover{background:#F7F8FE;}
                                                     // quand une semaine est pleine (aucune place dans la tolérance) ; par défaut Sa+Di.
     jPriority: {},                               // ordre d'importance des J, PAR LISTE : { listId: [J,...] }
     jTolerance: {},                                // tolérance ± jours par J, PAR LISTE : { listId: { J: tol } }
-    studyMethods: {}                              // méthode de révision conseillée par J, PAR LISTE : { listId: { J: "texte libre" } }
+    studyMethods: {},                             // méthode de révision conseillée par J, PAR LISTE : { listId: { J: "texte libre" } }
+    weightDecay: {                                 // dégression du poids (charge) des cours selon le J de la révision :
+      enabled: true,                               // les révisions tardives comptent alors moins lourd que les premières.
+      startJ: 30,                                  // jusqu'à ce J inclus, on respecte l'équivalence de difficulté telle quelle
+      stepJ: 45,                                    // au-delà de startJ, chaque tranche de stepJ jours fait perdre 1 échelon
+      pointsPerStep: 1                              // nombre d'échelons perdus par tranche de stepJ jours au-delà de startJ
+    }
   };
 
   var DOW = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
@@ -377,7 +383,8 @@ tbody tr:hover{background:#F7F8FE;}
       overflowDays: DEFAULT_SETTINGS.overflowDays.slice(),
       jPriority: {},
       jTolerance: {},
-      studyMethods: {}
+      studyMethods: {},
+      weightDecay: Object.assign({}, DEFAULT_SETTINGS.weightDecay)
     };
     if(raw){
       try{
@@ -427,6 +434,13 @@ tbody tr:hover{background:#F7F8FE;}
             Object.keys(src).forEach(function(k){ if(typeof src[k]==='string') dst[k]=src[k]; });
             s.studyMethods[lid]=dst;
           });
+        }
+        if(parsed.weightDecay && typeof parsed.weightDecay==='object'){
+          var pwd=parsed.weightDecay;
+          if(typeof pwd.enabled==='boolean') s.weightDecay.enabled=pwd.enabled;
+          if(typeof pwd.startJ==='number' && pwd.startJ>=0) s.weightDecay.startJ=pwd.startJ;
+          if(typeof pwd.stepJ==='number' && pwd.stepJ>0) s.weightDecay.stepJ=pwd.stepJ;
+          if(typeof pwd.pointsPerStep==='number' && pwd.pointsPerStep>0) s.weightDecay.pointsPerStep=pwd.pointsPerStep;
         }
       } catch(e){}
     }
@@ -497,12 +511,44 @@ tbody tr:hover{background:#F7F8FE;}
     var m=state.settings&&state.settings.studyMethods&&state.settings.studyMethods[listId]&&state.settings.studyMethods[listId][J];
     return (m!==undefined && m!==null && m!=='') ? m : defaultMethodFor(J);
   }
-  function weightFor(diff){
+  function baseWeightFor(diff){
     var w=state.settings&&state.settings.diffWeights;
     if(diff==='green') return (w&&w.green)||1;
     if(diff==='orange') return (w&&w.orange)||2;
     if(diff==='red') return (w&&w.red)||3;
     return 1; // pas de difficulté choisie : poids neutre
+  }
+  // Applique une dégression du poids : chaque « échelon » perdu fait tomber la difficulté au poids
+  // de l'échelon immédiatement inférieur (rouge → orange, orange → vert) ; en dessous du plus bas
+  // échelon (vert), chaque échelon supplémentaire divise encore le poids par 2 (il n'y a rien de plus
+  // bas vers quoi retomber). Exemple par défaut (vert=1, orange=2, rouge=3), pour 1 échelon perdu :
+  // rouge → 2 (poids de l'orange), orange → 1 (poids du vert), vert → 0,5 (moitié du vert).
+  function decayWeight(base, points){
+    if(!points || points<=0) return base;
+    var w=state.settings&&state.settings.diffWeights||DEFAULT_SETTINGS.diffWeights;
+    var levels=[Number(w.green), Number(w.orange), Number(w.red)].filter(function(n){ return !isNaN(n); });
+    levels.sort(function(a,b){ return a-b; });
+    var uniq=[]; levels.forEach(function(v){ if(uniq.indexOf(v)===-1) uniq.push(v); });
+    var rank=uniq.indexOf(base);
+    if(rank===-1) return Math.max(0.01, base/Math.pow(2,points)); // cas improbable : repli proportionnel
+    var newRank=rank-points;
+    if(newRank>=0) return uniq[newRank];
+    return uniq[0]/Math.pow(2, -newRank);
+  }
+  // Poids d'un cours pour une révision donnée : dépend de sa difficulté, et, si la dégression est
+  // activée dans les réglages, du J de cette révision (les révisions tardives pèsent alors moins).
+  function weightFor(diff, J){
+    var base=baseWeightFor(diff);
+    if(diff!=='green' && diff!=='orange' && diff!=='red') return base; // poids neutre : pas de dégression
+    if(J===undefined || J===null) return base;
+    var wd=(state.settings&&state.settings.weightDecay)||DEFAULT_SETTINGS.weightDecay;
+    if(!wd.enabled) return base;
+    var startJ=(typeof wd.startJ==='number'&&wd.startJ>=0)?wd.startJ:DEFAULT_SETTINGS.weightDecay.startJ;
+    var stepJ=(typeof wd.stepJ==='number'&&wd.stepJ>0)?wd.stepJ:DEFAULT_SETTINGS.weightDecay.stepJ;
+    var pps=(typeof wd.pointsPerStep==='number'&&wd.pointsPerStep>0)?wd.pointsPerStep:DEFAULT_SETTINGS.weightDecay.pointsPerStep;
+    if(J<=startJ) return base;
+    var steps=Math.ceil((J-startJ)/stepJ);
+    return decayWeight(base, steps*pps);
   }
   // Rang de priorité (0 = le plus prioritaire, 1 = le moins prioritaire) d'un J
   // au sein de SA PROPRE liste. Permet de comparer des événements issus de listes différentes.
@@ -525,7 +571,7 @@ tbody tr:hover{background:#F7F8FE;}
           var target = addDays(c.dateLearned, J);
           events.push({
             courseId:c.id, subjectId:s.id, subjectName:s.name, courseName:c.name||'(sans nom)',
-            interval:J, listId:list.id, weight:weightFor(c.difficulty), difficulty:c.difficulty,
+            interval:J, listId:list.id, weight:weightFor(c.difficulty, J), difficulty:c.difficulty,
             target:target, tol:toleranceFor(J, list.id), method:methodFor(J, list.id),
             done: !!(c.done && c.done[J])
           });
@@ -1088,6 +1134,25 @@ tbody tr:hover{background:#F7F8FE;}
     });
     html+='</div>';
 
+    var wDec=state.settings.weightDecay||DEFAULT_SETTINGS.weightDecay;
+    html+='<div class="settings-section">';
+    html+='<h3 class="serif">Dégression du poids dans le temps</h3>';
+    html+='<p class="hint">Fait peser moins lourd les révisions tardives que les premières. Jusqu\'au J indiqué ci-dessous, l\'équivalence de difficulté définie plus haut est respectée telle quelle. Au-delà, chaque tranche de jours fait perdre un échelon (un rouge prend le poids d\'un orange, un orange celui d\'un vert, un vert est divisé par 2, etc.). '+
+      'Exemple avec la hiérarchie par défaut (vert=1, orange=2, rouge=3), seuil à J30 et tranche de 45 jours : à J75, un cours rouge pèse 2 (poids de l\'orange), un orange pèse 1 (poids du vert), un vert pèse 0,5 (moitié du vert).</p>';
+    html+='<div class="color-row"><label>Activer la dégression</label>'+
+      '<input type="checkbox" data-action="toggle-weight-decay" '+(wDec.enabled?'checked':'')+'>'+
+      '<span class="swatch-value mono">'+(wDec.enabled?'activée':'désactivée')+'</span></div>';
+    html+='<div class="color-row"><label>Respecter l\'équivalence jusqu\'à</label>'+
+      '<input type="number" min="0" step="1" style="width:80px;" value="'+wDec.startJ+'" data-action="set-decay-start" '+(wDec.enabled?'':'disabled')+'>'+
+      '<span class="swatch-value mono">J'+wDec.startJ+'</span></div>';
+    html+='<div class="color-row"><label>Perdre un échelon tous les</label>'+
+      '<input type="number" min="1" step="1" style="width:80px;" value="'+wDec.stepJ+'" data-action="set-decay-step" '+(wDec.enabled?'':'disabled')+'>'+
+      '<span class="swatch-value mono">'+wDec.stepJ+' jours</span></div>';
+    html+='<div class="color-row"><label>Échelons perdus par tranche</label>'+
+      '<input type="number" min="1" step="1" style="width:80px;" value="'+wDec.pointsPerStep+'" data-action="set-decay-points" '+(wDec.enabled?'':'disabled')+'>'+
+      '<span class="swatch-value mono">'+wDec.pointsPerStep+'</span></div>';
+    html+='</div>';
+
     html+='<div class="settings-section">';
     html+='<h3 class="serif">Plafond quotidien</h3>';
     html+='<p class="hint">Nombre maximal de cours (pondérés selon la difficulté ci-dessus) prévus le même jour. Avec la hiérarchie 1/2/3, un plafond de 12 correspond par exemple à 12 cours faciles, 6 moyens, 4 difficiles, ou un mélange.</p>';
@@ -1374,7 +1439,8 @@ tbody tr:hover{background:#F7F8FE;}
         overflowDays:DEFAULT_SETTINGS.overflowDays.slice(),
         jPriority:{},
         jTolerance:{},
-        studyMethods:{}
+        studyMethods:{},
+        weightDecay:Object.assign({}, DEFAULT_SETTINGS.weightDecay)
       };
       persistSettings().then(syncSettingsWithJLists).then(render);
     }
@@ -1453,6 +1519,25 @@ tbody tr:hover{background:#F7F8FE;}
     else if(action==='set-diff-weight'){
       var wv=parseFloat(el.value);
       if(!isNaN(wv) && wv>0){ state.settings.diffWeights[el.dataset.key]=wv; persistSettings().then(render); }
+      else render();
+    }
+    else if(action==='toggle-weight-decay'){
+      state.settings.weightDecay.enabled=el.checked;
+      persistSettings().then(render);
+    }
+    else if(action==='set-decay-start'){
+      var dsv=parseInt(el.value,10);
+      if(!isNaN(dsv) && dsv>=0){ state.settings.weightDecay.startJ=dsv; persistSettings().then(render); }
+      else render();
+    }
+    else if(action==='set-decay-step'){
+      var dpv=parseInt(el.value,10);
+      if(!isNaN(dpv) && dpv>0){ state.settings.weightDecay.stepJ=dpv; persistSettings().then(render); }
+      else render();
+    }
+    else if(action==='set-decay-points'){
+      var dppv=parseInt(el.value,10);
+      if(!isNaN(dppv) && dppv>0){ state.settings.weightDecay.pointsPerStep=dppv; persistSettings().then(render); }
       else render();
     }
     else if(action==='set-daily-cap'){
