@@ -933,11 +933,12 @@ tbody tr:hover{background:#F7F8FE;}
       if(evs.length) cls+=' has-events';
       html+='<div class="'+cls+'" data-action="select-day" data-day="'+iso+'" title="'+(overloaded[iso]?'Trop de cours ce jour-là':'')+'">'+day;
       if(overloaded[iso]) html+='<span class="overload-flag">⚠️</span>';
-      if(evs.length){
+      var undoneEvs = evs.filter(function(e){ return !e.done; });
+      if(undoneEvs.length){
         html+='<div class="dots">';
-        evs.slice(0,4).forEach(function(e){ html+='<span style="background:'+diffColor(e.difficulty)+'"></span>'; });
+        undoneEvs.slice(0,4).forEach(function(e){ html+='<span style="background:'+diffColor(e.difficulty)+'"></span>'; });
         html+='</div>';
-        html+='<span class="load-badge">'+dayLoad(evs)+'</span>';
+        html+='<span class="load-badge">'+dayLoad(undoneEvs)+'</span>';
       }
       html+='</div>';
     }
@@ -1350,9 +1351,10 @@ tbody tr:hover{background:#F7F8FE;}
     html+='<div class="app-sub">Révisions espacées · stockées localement</div>';
     html+=renderTabs();
     html+=renderMain();
-    html+=renderDailyAgendaBar();
+    var showDailyAgendaBar = (state.currentView==='agenda');
+    if(showDailyAgendaBar) html+=renderDailyAgendaBar();
     app.innerHTML=html;
-    app.style.paddingBottom = state.dailyAgendaCollapsed ? '64px' : '46vh';
+    app.style.paddingBottom = !showDailyAgendaBar ? '20px' : (state.dailyAgendaCollapsed ? '64px' : '46vh');
 
     if(state.addingSubject){
       var input=document.getElementById('new-subject-input');
