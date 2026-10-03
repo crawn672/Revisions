@@ -534,6 +534,14 @@ tbody tr:hover{background:#F7F8FE;}
     return order.length>1 ? idx/(order.length-1) : 0;
   }
 
+  // Avance maximale autorisée (en jours AVANT la date théorique) quand on étale : on ne veut pas
+  // trop rapprocher une révision. J≤3 : 1 j · J≤10 : 2 j · J≤30 : 3 j · au-delà : 4 j (et jamais
+  // plus que la tolérance réglée). Vers l'arrière (après la date théorique), c'est toute la tolérance.
+  function earlyMaxFor(J, tol){
+    var m = J<=3 ? 1 : (J<=10 ? 2 : (J<=30 ? 3 : 4));
+    return Math.min(m, tol);
+  }
+
   function buildEvents(){
     var events=[];
     state.subjects.forEach(function(s){
@@ -542,14 +550,22 @@ tbody tr:hover{background:#F7F8FE;}
         if(!c.dateLearned) return;
         var list = state.jlists.find(function(l){return l.id===c.listId;});
         if(!list) return;
-        list.days.forEach(function(J){
-          var target = addDays(c.dateLearned, J);
-          events.push({
+        var days = list.days.slice().sort(function(a,b){return a-b;});
+        var prev=null;
+        days.forEach(function(J){
+          var dv = c.done && c.done[J];
+          var base = addDays(c.dateLearned, J);
+          var ev = {
             courseId:c.id, subjectId:s.id, subjectName:s.name, courseName:c.name||'(sans nom)',
             interval:J, listId:list.id, weight:weightFor(c.difficulty, J), difficulty:c.difficulty,
-            target:target, tol:toleranceFor(J, list.id), method:methodFor(J, list.id),
-            done: !!(c.done && c.done[J])
-          });
+            baseTarget:base, target:base, tol:toleranceFor(J, list.id), method:methodFor(J, list.id),
+            done: !!dv,
+            // date de validation (les anciennes données stockent juste « true » : pas de date connue)
+            doneDate: (typeof dv==='string' && /^\d{4}-\d{2}-\d{2}$/.test(dv)) ? dv : null,
+            prev: prev, placed:false, scheduled:null, carriedDays:0
+          };
+          events.push(ev);
+          prev=ev;
         });
       });
     });
@@ -562,7 +578,7 @@ tbody tr:hover{background:#F7F8FE;}
       var ra=jPriorityRank(a.interval, a.listId), rb=jPriorityRank(b.interval, b.listId);
       if(ra!==rb) return ra-rb; // priorité des J définie dans les réglages (par liste)
       if(a.interval!==b.interval) return a.interval-b.interval;
-      if(a.target!==b.target) return a.target<b.target?-1:1;
+      if(a.baseTarget!==b.baseTarget) return a.baseTarget<b.baseTarget?-1:1;
       return a.courseId<b.courseId?-1:1;
     });
     var loads = {};
@@ -571,10 +587,7 @@ tbody tr:hover{background:#F7F8FE;}
     var weekdayCaps = (state.settings&&state.settings.weekdayCaps)||{};
     var capOf = function(date){
       var wd = dowIndex(date);
-      // plafond "de base" pour ce jour de semaine, hors période spécifique
       var fallback = (typeof weekdayCaps[wd]==='number' && weekdayCaps[wd]>0) ? weekdayCaps[wd] : dailyCap;
-      // une période spécifique (ex: stage) qui couvre la date l'emporte, jour de semaine par jour de semaine ;
-      // si elle ne précise rien pour ce jour-là, on retombe sur le plafond de base ci-dessus.
       for(var i=0;i<capPeriods.length;i++){
         var p=capPeriods[i];
         if(date>=p.start && date<=p.end){
@@ -587,34 +600,67 @@ tbody tr:hover{background:#F7F8FE;}
     var loadOf = function(date){ return loads[date]||0; };
     var overflowDays = (state.settings&&state.settings.overflowDays) || DEFAULT_SETTINGS.overflowDays;
 
-    // ---- passe 1 : placement idéal autour de la date théorique (J ± tolérance), en respectant les plafonds ----
-    sorted.forEach(function(e){
-      var candidates=[];
-      for(var d=-e.tol; d<=e.tol; d++){ candidates.push(addDays(e.target,d)); }
-      candidates.sort(function(a,b){ return Math.abs(daysBetween(a,e.target))-Math.abs(daysBetween(b,e.target)); });
+    // Date de référence à partir de laquelle on compte l'écart jusqu'au J suivant :
+    //  - révision cochée avec date : le jour où elle a été VALIDÉE (pas la date théorique) ;
+    //  - sinon : sa date théorique, ou sa date réellement planifiée si elle a été repoussée.
+    function anchorOf(p){
+      if(p.done && p.doneDate) return p.doneDate;
+      return (p.scheduled && p.scheduled>p.target) ? p.scheduled : p.target;
+    }
+    // Date théorique d'un J = référence du J précédent + écart entre les deux J
+    // (ex. J7 validé le 12 → J30 le 12 + 23 jours). Le premier J part du jour d'apprentissage.
+    function targetFor(e){
+      if(!e.prev) return e.baseTarget;
+      return addDays(anchorOf(e.prev), e.interval - e.prev.interval);
+    }
+
+    function placeDone(e){
+      e.target = targetFor(e);
+      e.scheduled = e.doneDate;
+      e.carriedDays = 0; e.placed = true;
+      loads[e.scheduled] = (loads[e.scheduled]||0) + e.weight;
+    }
+    // Cours en retard : replacé dès aujourd'hui (puis demain, après-demain…) à la première date
+    // qui a de la place — jamais « 3-4 jours après » sauf si les cours en retard remplissent seuls les plafonds.
+    function placeLate(e){
+      var d = today, guard = 3650;
+      while(loadOf(d)+e.weight>capOf(d) && guard-->0){ d=addDays(d,1); }
+      loads[d]=(loads[d]||0)+e.weight;
+      e.scheduled=d;
+      e.carriedDays=Math.max(0, daysBetween(d, e.target));
+      e.placed=true;
+    }
+    function placeNormal(e){
+      var early = earlyMaxFor(e.interval, e.tol);
+      var minDate = e.done ? null : today; // un cours à faire ne se place jamais dans le passé
+      var cand=[];   // {d, cost} : après = 1 point par jour, avant = 2 points par jour (on préfère reculer qu'avancer)
+      for(var k=-early; k<=e.tol; k++){
+        var dt=addDays(e.target,k);
+        if(minDate && dt<minDate) continue;
+        cand.push({d:dt, cost: k>=0 ? k : -2*k});
+      }
+      if(!cand.length) cand.push({d:minDate||e.target, cost:0});
+      cand.sort(function(a,b){ return a.cost-b.cost; });
+      var candidates = cand.map(function(c){ return c.d; });
       var chosen=null;
       for(var i=0;i<candidates.length;i++){
-        var dte=candidates[i];
-        if(loadOf(dte)+e.weight<=capOf(dte)){ chosen=dte; break; }
+        if(loadOf(candidates[i])+e.weight<=capOf(candidates[i])){ chosen=candidates[i]; break; }
       }
-      // Aucune place dans la fenêtre de tolérance (semaine pleine) : on tente de rabattre sur les
-      // jours de report choisis dans les réglages (ex. week-end), même en dehors de la tolérance.
       if(!chosen && overflowDays && overflowDays.length){
-        var overflowCandidates=[];
-        var maxRadius=60; // recherche jusqu'à ~2 mois avant/après, largement suffisant en pratique
-        for(var r=1;r<=maxRadius;r++){
-          var after=addDays(e.target,r), before=addDays(e.target,-r);
-          if(overflowDays.indexOf(dowIndex(after))!==-1) overflowCandidates.push(after);
-          if(overflowDays.indexOf(dowIndex(before))!==-1) overflowCandidates.push(before);
+        var oc=[];
+        for(var r=1;r<=60;r++){
+          var after=addDays(e.target,r);
+          if(overflowDays.indexOf(dowIndex(after))!==-1) oc.push({d:after, cost:r});
+          if(r<=early){
+            var before=addDays(e.target,-r);
+            if((!minDate || before>=minDate) && overflowDays.indexOf(dowIndex(before))!==-1) oc.push({d:before, cost:2*r});
+          }
         }
-        overflowCandidates.sort(function(a,b){ return Math.abs(daysBetween(a,e.target))-Math.abs(daysBetween(b,e.target)); });
-        for(var k=0;k<overflowCandidates.length;k++){
-          var ofd=overflowCandidates[k];
-          if(loadOf(ofd)+e.weight<=capOf(ofd)){ chosen=ofd; break; }
+        oc.sort(function(a,b){ return a.cost-b.cost; });
+        var overflowCandidates = oc.map(function(c){ return c.d; });
+        for(var j=0;j<overflowCandidates.length;j++){
+          if(loadOf(overflowCandidates[j])+e.weight<=capOf(overflowCandidates[j])){ chosen=overflowCandidates[j]; break; }
         }
-        // Toujours rien : même les jours de report sont pleins. On accepte alors de dépasser le
-        // plafond, sur le jour le moins chargé parmi tolérance + jours de report ; ce dépassement
-        // est ensuite signalé dans l'agenda (voir overloadedDays plus bas).
         if(!chosen){
           var allC=candidates.concat(overflowCandidates);
           var best=allC[0], bestLoad=loadOf(best);
@@ -622,49 +668,51 @@ tbody tr:hover{background:#F7F8FE;}
           chosen=best;
         }
       }
-      // Aucun jour de report configuré : comportement précédent (le moins chargé dans la tolérance).
       if(!chosen){
         var best2=candidates[0], bestLoad2=loadOf(best2);
         candidates.forEach(function(dte){ var ld=loadOf(dte); if(ld<bestLoad2){ bestLoad2=ld; best2=dte; } });
         chosen=best2;
       }
       loads[chosen]=(loads[chosen]||0)+e.weight;
-      e.scheduled=chosen;
-      e.carriedDays=0; // nombre de jours de report dû à un cours non coché (rempli en passe 2 si besoin)
-    });
+      e.scheduled=chosen; e.carriedDays=0; e.placed=true;
+    }
+    // Place un événement après son précédent (dont dépend sa date théorique).
+    function place(e){
+      if(e.placed) return;
+      if(e.done && e.doneDate){ placeDone(e); return; }
+      if(e.prev) place(e.prev);
+      e.target = targetFor(e);
+      if(!e.done && e.target<today) placeLate(e); else placeNormal(e);
+    }
 
-    // ---- passe 2 : report des cours non cochés dont le jour prévu est ENTIÈREMENT passé ----
-    // Un cours prévu aujourd'hui n'est jamais touché ici, même non coché : il peut encore être fait
-    // avant la fin de la journée. Ce n'est qu'une fois le jour révolu (donc à la prochaine ouverture
-    // de l'appli après minuit) qu'un cours non fait devient « en retard » et doit être replacé plus
-    // loin, à la première date où il reste de la place selon les plafonds — sans jamais dépasser ces
-    // plafonds ni déplacer les cours déjà bien placés.
-    var overdue = sorted.filter(function(e){ return !e.done && e.scheduled < today; });
-    overdue.sort(function(a,b){
+    // ---- étape 1 : révisions cochées avec date de validation (position fixe, elles occupent déjà leur jour) ----
+    sorted.forEach(function(e){ if(e.done && e.doneDate) placeDone(e); });
+
+    // ---- étape 2 : les cours NON FAITS en retard passent en premier (priorité absolue sur l'étalement) ----
+    var late = sorted.filter(function(e){
+      if(e.done) return false;
+      if(e.prev && !(e.prev.done && e.prev.doneDate)) return false; // sa date dépend d'un J encore à placer
+      e.target = targetFor(e);
+      return e.target < today;
+    });
+    late.sort(function(a,b){
+      if(a.target!==b.target) return a.target<b.target?-1:1; // le plus ancien d'abord
       var ra=jPriorityRank(a.interval,a.listId), rb=jPriorityRank(b.interval,b.listId);
-      if(ra!==rb) return ra-rb; // même ordre de priorité que la passe 1
-      if(a.scheduled!==b.scheduled) return a.scheduled<b.scheduled?-1:1; // le plus ancien d'abord
+      if(ra!==rb) return ra-rb;
       return a.courseId<b.courseId?-1:1;
     });
-    overdue.forEach(function(e){
-      var originalScheduled = e.scheduled;
-      var d = today;
-      var guard = 3650; // garde-fou anti-boucle infinie (≈ 10 ans)
-      while(loadOf(d)+e.weight>capOf(d) && guard-->0){ d=addDays(d,1); }
-      loads[d]=(loads[d]||0)+e.weight;
-      e.scheduled=d;
-      e.carriedDays=daysBetween(d, originalScheduled);
-    });
+    late.forEach(function(e){ if(!e.placed) placeLate(e); });
 
-    // ---- détection des jours en surcharge (dépassement du plafond malgré les jours de report) ----
+    // ---- étape 3 : tout le reste, par ordre de priorité, avec étalement asymétrique ----
+    sorted.forEach(place);
+
     var overloadedDays = {};
     Object.keys(loads).forEach(function(date){
       var cap=capOf(date);
       if(loads[date]>cap) overloadedDays[date]={load:loads[date], cap:cap};
     });
     sorted.overloadedDays = overloadedDays;
-    sorted.capOf = capOf; // exposé pour l'affichage (ex: plafond du jour sélectionné dans l'agenda)
-
+    sorted.capOf = capOf;
     return sorted;
   }
 
@@ -718,7 +766,7 @@ tbody tr:hover{background:#F7F8FE;}
     var d=state.data[subjectId];
     var c=d.courses.find(function(c){return c.id===courseId;});
     if(!c) return;
-    c.done=c.done||{}; c.done[interval]=!c.done[interval];
+    c.done=c.done||{}; c.done[interval]=c.done[interval]?false:todayISO(); // on mémorise le jour de validation
     await persistSubjectData(subjectId); render();
   }
 
@@ -1220,7 +1268,7 @@ tbody tr:hover{background:#F7F8FE;}
 
     html+='<div class="settings-section">';
     html+='<h3 class="serif">Tolérance (± jours) par intervalle J</h3>';
-    html+='<p class="hint">Marge autour de la date théorique de chaque J, propre à chaque liste, dans laquelle un cours peut être décalé pour respecter le plafond quotidien. Exemple : J10 avec une tolérance de 2 peut être placé entre J8 et J12.</p>';
+    html+='<p class="hint">Marge maximale APRÈS la date théorique de chaque J, propre à chaque liste, dans laquelle un cours peut être décalé pour respecter le plafond quotidien. On avance très peu : au plus 1 jour avant pour J≤3, 2 jours pour J≤10, 3 jours pour J≤30, 4 jours au-delà (et jamais plus que la tolérance). Exemple : J10 avec une tolérance de 5 peut être placé de J8 à J15, en privilégiant les jours après.</p>';
     if(!state.jlists.length){ html+='<div class="empty-table-note">Aucune liste de J pour le moment.</div>'; }
     state.jlists.forEach(function(l){
       html+='<div class="settings-sublist"><div class="settings-sublist-title">'+escapeHTML(l.name)+'</div>';
