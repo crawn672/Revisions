@@ -600,18 +600,11 @@ tbody tr:hover{background:#F7F8FE;}
     var loadOf = function(date){ return loads[date]||0; };
     var overflowDays = (state.settings&&state.settings.overflowDays) || DEFAULT_SETTINGS.overflowDays;
 
-    // Date de référence à partir de laquelle on compte l'écart jusqu'au J suivant :
-    //  - révision cochée avec date : le jour où elle a été VALIDÉE (pas la date théorique) ;
-    //  - sinon : sa date théorique, ou sa date réellement planifiée si elle a été repoussée.
-    function anchorOf(p){
-      if(p.done && p.doneDate) return p.doneDate;
-      return (p.scheduled && p.scheduled>p.target) ? p.scheduled : p.target;
-    }
-    // Date théorique d'un J = référence du J précédent + écart entre les deux J
-    // (ex. J7 validé le 12 → J30 le 12 + 23 jours). Le premier J part du jour d'apprentissage.
+    // Date théorique d'un J = TOUJOURS date d'apprentissage (J0) + J jours. Elle ne dépend ni du
+    // retard ni de la date de validation des J précédents : un J reporté ou coché en retard ne
+    // décale plus les suivants (J45 reste à J0+45, J90 à J0+90).
     function targetFor(e){
-      if(!e.prev) return e.baseTarget;
-      return addDays(anchorOf(e.prev), e.interval - e.prev.interval);
+      return e.baseTarget;
     }
 
     function placeDone(e){
@@ -691,7 +684,6 @@ tbody tr:hover{background:#F7F8FE;}
     // ---- étape 2 : les cours NON FAITS en retard passent en premier (priorité absolue sur l'étalement) ----
     var late = sorted.filter(function(e){
       if(e.done) return false;
-      if(e.prev && !(e.prev.done && e.prev.doneDate)) return false; // sa date dépend d'un J encore à placer
       e.target = targetFor(e);
       return e.target < today;
     });
